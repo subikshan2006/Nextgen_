@@ -60,11 +60,15 @@ os.environ["PATH"] = "/usr/local/bin:" + os.environ.get("PATH", "")
 # 1) Install Ollama (free, from ollama.com)
 print("[1/5] Installing Ollama...")
 if not os.path.exists(OLLAMA_BIN):
-    if not sh("curl -fsSL https://ollama.com/install.sh | sh", silent=False):
-        print("First attempt failed, retrying...")
-        sh("curl -fsSL https://ollama.com/install.sh | sh", silent=False)
+    print("Downloading ollama binary directly...")
+    sh("curl -fsSL -o " + OLLAMA_BIN + " https://ollama.com/download/ollama-linux-amd64", silent=False, timeout=3600)
+    sh("chmod +x " + OLLAMA_BIN)
+if not os.path.exists(OLLAMA_BIN):
+    print("Direct download failed; trying install script...")
+    sh("curl -fsSL https://ollama.com/install.sh | sh", silent=False, timeout=3600)
 if not os.path.exists(OLLAMA_BIN):
     print("FATAL: ollama binary missing at", OLLAMA_BIN); raise SystemExit(1)
+sh(OLLAMA_BIN + " --version", silent=False)
 print("Ollama installed.")
 
 # 2) Install cloudflared tunnel (free)
