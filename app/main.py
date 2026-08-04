@@ -53,9 +53,15 @@ def health():
 
 @app.get("/api/models")
 async def public_models():
+    from .database import get_db, get_ollama_url
     from .services.ollama import OllamaClient
-    client = OllamaClient()
-    return {"models": await client.list_models(), "reachable": await client.check()}
+
+    db = get_db().__next__()
+    try:
+        client = OllamaClient(get_ollama_url(db))
+        return {"models": await client.list_models(), "reachable": await client.check()}
+    finally:
+        db.close()
 
 
 # ---- Static frontend ----

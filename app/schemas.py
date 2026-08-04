@@ -68,6 +68,10 @@ class ModelInfo(BaseModel):
     size_gb: Optional[float] = None
 
 
+class OllamaUrlIn(BaseModel):
+    url: str
+
+
 class OllamaStatus(BaseModel):
     reachable: bool
     message: str = ""

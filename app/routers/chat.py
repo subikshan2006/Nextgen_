@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import get_current_user
 from ..config import get_settings
-from ..database import get_db
+from ..database import get_db, get_ollama_url
 from ..models import Conversation, Message, User
 from ..schemas import ChatRequest, ConversationOut, MessageOut
 from ..services.ollama import OllamaClient
@@ -94,7 +94,8 @@ async def stream_chat(body: ChatRequest, user: User = Depends(get_current_user),
     ollama_messages = [{"role": "system", "content": system_prompt}] + history
 
     async def event_gen():
-        client = OllamaClient()
+        url = get_ollama_url(db)
+        client = OllamaClient(url)
         collected = []
         thinking = []
         yield "event: start\ndata: " + json.dumps({"conversation_id": conv.id, "title": conv.title}) + "\n\n"

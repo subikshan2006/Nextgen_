@@ -70,3 +70,15 @@ def active_driver() -> str:
     if url.startswith("postgres"):
         return "postgresql (Neon)"
     return "sqlite"
+
+
+def get_ollama_url(db) -> str:
+    """Resolve the Ollama base URL. Prefers the runtime-updatable value stored
+    in ApiSetting (set by the Colab/Kaggle GPU notebooks), falls back to the
+    OLLAMA_URL env var."""
+    from .models import ApiSetting
+
+    row = db.query(ApiSetting).filter(ApiSetting.key == "ollama_url").first()
+    if row and row.value:
+        return row.value
+    return get_settings().ollama_url

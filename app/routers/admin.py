@@ -3,10 +3,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_admin, hash_password
-from ..database import active_driver, get_db
+from ..database import active_driver, get_db, get_ollama_url
 from ..models import ApiSetting, Conversation, User
 from ..schemas import (
-    ModelInfo, OllamaStatus, SystemStatus, UserAdminUpdate, UserOut,
+    ModelInfo, OllamaStatus, OllamaUrlIn, SystemStatus, UserAdminUpdate, UserOut,
 )
 from ..services.ollama import OllamaClient
 
@@ -55,25 +55,40 @@ def delete_user(user_id: int, admin: User = Depends(get_current_admin), db: Sess
 
 
 @router.get("/models", response_model=list[ModelInfo])
-async def list_models(_: User = Depends(get_current_admin)):
-    client = OllamaClient()
+async def list_models(_: User = Depends(get_current_admin), db: Session = Depends(get_db)):
+    client = OllamaClient(get_ollama_url(db))
     return [ModelInfo(**m) for m in await client.list_models()]
 
 
 @router.get("/status", response_model=SystemStatus)
 async def system_status(_: User = Depends(get_current_admin), db: Session = Depends(get_db)):
-    client = OllamaClient()
+    url = get_ollama_url(db)
+    client = OllamaClient(url)
     reachable = await client.check()
     models = [ModelInfo(**m) for m in await client.list_models()]
     return SystemStatus(
         app="NEXTGEN AI v20",
         version="20.0.0",
         database=active_driver(),
-        ollama=OllamaStatus(reachable=reachable, message="OK" if reachable else "Ollama unreachable"),
+        ollama=OllamaStatus(reachable=reachable, message=f"OK ({url})" if reachable else "Ollama unreachable"),
         models=models,
         total_users=db.query(User).count(),
         total_conversations=db.query(Conversation).count(),
     )
+
+
+@router.post("/ollama_url")
+def set_ollama_url(body: OllamaUrlIn, _: User = Depends(get_current_admin), db: Session = Depends(get_db)):
+    """Called by the Colab/Kaggle GPU notebooks on startup so the app always
+    points at the current tunnel URL."""
+    row = db.query(ApiSetting).filter(ApiSetting.key == "ollama_url").first()
+    if not row:
+        row = ApiSetting(key="ollama_url", value=body.url)
+        db.add(row)
+    else:
+        row.value = body.url
+    db.commit()
+    return {"ok": True, "ollama_url": body.url}
 
 
 @router.get("/settings")
