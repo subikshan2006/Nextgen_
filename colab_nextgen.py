@@ -119,52 +119,37 @@ if not sh(OLLAMA_BIN + " create nextgen-trained -f /content/Modelfile", silent=F
     print("FATAL: could not create nextgen-trained."); raise SystemExit(1)
 print("nextgen-trained created.")
 
-# 4) Start a free no-account tunnel (cloudflared -> localhost.run -> serveo -> ngrok)
+# 4) Start a free no-account tunnel (localhost.run -> serveo.net -> cloudflared -> ngrok)
+#    Colab quick-tunnels get Cloudflare's 403 browser-check, so SSH tunnels come first.
 print("[4/5] Starting tunnel...")
 TUNNEL_LOG = "/content/tunnel.log"
+
+def kill_tunnels():
+    for pat in ("cloudflared", "localhost.run", "serveo.net", "ngrok"):
+        subprocess.run(["pkill", "-f", pat], capture_output=True)
+    time.sleep(2)
+
+def wait_url(patterns, wait_secs, step=2):
+    for _ in range(int(wait_secs / step)):
+        try:
+            log = open(TUNNEL_LOG).read()
+            for p in patterns:
+                m = re.search(p, log)
+                if m:
+                    return m.group(1) if m.lastindex else m.group(0)
+        except Exception:
+            pass
+        time.sleep(step)
+    return None
 
 def download_cloudflared():
     if os.path.exists("/usr/local/bin/cloudflared"):
         return True
-    print("Downloading cloudflared (free, no account needed)...")
+    print("Downloading cloudflared (fallback)...")
     if not sh("curl -fsSL -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64", silent=False, timeout=600):
-        print("WARNING: cloudflared download failed")
         return False
     sh("chmod +x /tmp/cloudflared")
     return os.path.exists("/tmp/cloudflared")
-
-def start_cloudflared():
-    if not download_cloudflared():
-        return None
-    print("Starting Cloudflare quick tunnel...")
-    subprocess.Popen(["/tmp/cloudflared", "tunnel", "--no-autoupdate", "--url", "http://localhost:11434"],
-                     stdout=open(TUNNEL_LOG, "w"), stderr=subprocess.STDOUT)
-    for _ in range(60):
-        try:
-            log = open(TUNNEL_LOG).read()
-            m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", log)
-            if m:
-                return m.group(0)
-        except Exception:
-            pass
-        time.sleep(2)
-    return None
-
-def start_ssh_tunnel(host_arg):
-    cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-           "-o", "ServerAliveInterval=60", "-o", "ServerAliveCountMax=3",
-           "-o", "ExitOnForwardFailure=yes", "-N", "-R", "80:localhost:11434", host_arg]
-    subprocess.Popen(cmd, stdout=open(TUNNEL_LOG, "w"), stderr=subprocess.STDOUT)
-    for _ in range(45):
-        try:
-            log = open(TUNNEL_LOG).read()
-            m = re.search(r"https://[a-z0-9-]+\.(lhr\.life|serveo\.net)", log)
-            if m:
-                return m.group(0)
-        except Exception:
-            pass
-        time.sleep(3)
-    return None
 
 def start_ngrok():
     tok = os.environ.get("NGROK_AUTHTOKEN", "").strip()
@@ -181,43 +166,39 @@ def start_ngrok():
         try:
             for line in open("/content/ngrok.log"):
                 if "https://" in line:
-                    m = re.search(r"https://[a-z0-9-]+\.ngrok\.(io|app)", line)
+                    m = re.search(r"https://([a-z0-9-]+\.ngrok\.(?:io|app))", line)
                     if m:
-                        return m.group(0)
+                        return m.group(1)
         except Exception:
             pass
         time.sleep(2)
     return None
 
-def start_tunnel():
-    print("Trying Cloudflare quick tunnel...")
-    url = start_cloudflared()
-    if url:
-        return url
-    print("cloudflared failed; trying localhost.run...")
-    subprocess.run(["pkill", "-f", "cloudflared"], capture_output=True)
-    time.sleep(2)
-    url = start_ssh_tunnel("nokey@localhost.run")
-    if url:
-        return url
-    print("localhost.run failed; trying serveo.net...")
-    subprocess.run(["pkill", "-f", "localhost.run"], capture_output=True)
-    time.sleep(2)
-    url = start_ssh_tunnel("serveo.net")
-    if url:
-        return url
-    print("serveo failed; trying ngrok (set NGROK_AUTHTOKEN if you have one)...")
-    subprocess.run(["pkill", "-f", "serveo.net"], capture_output=True)
-    time.sleep(2)
-    return start_ngrok()
-
-url = start_tunnel()
-print("[5/5] Tunnel URL:", url)
-if not url:
-    print("FATAL: no tunnel URL appeared. All tunnel providers failed.")
-    print("Tip: create a free ngrok account and set NGROK_AUTHTOKEN in a cell:")
-    print("  import os; os.environ['NGROK_AUTHTOKEN'] = 'your_token'")
-    raise SystemExit(1)
+def start_one(provider):
+    kill_tunnels()
+    print("Trying", provider, "...")
+    if provider == "localhost.run":
+        subprocess.Popen(["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+                          "-o", "ServerAliveInterval=60", "-o", "ServerAliveCountMax=3",
+                          "-o", "ExitOnForwardFailure=yes", "-N", "-R", "80:localhost:11434", "nokey@localhost.run"],
+                         stdout=open(TUNNEL_LOG, "w"), stderr=subprocess.STDOUT)
+        return wait_url([r"url is:\s*[\r\n\s]*(https://[a-z0-9-]+\.lhr\.life)",
+                         r"https://(?!www\.)[a-z0-9-]+\.lhr\.life"], 90)
+    if provider == "serveo.net":
+        subprocess.Popen(["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+                          "-o", "ServerAliveInterval=60", "-o", "ServerAliveCountMax=3",
+                          "-o", "ExitOnForwardFailure=yes", "-N", "-R", "80:localhost:11434", "serveo.net"],
+                         stdout=open(TUNNEL_LOG, "w"), stderr=subprocess.STDOUT)
+        return wait_url([r"https://([a-z0-9-]+\.serveo\.net)"], 90)
+    if provider == "cloudflared":
+        if not download_cloudflared():
+            return None
+        subprocess.Popen(["/tmp/cloudflared", "tunnel", "--no-autoupdate", "--url", "http://localhost:11434"],
+                         stdout=open(TUNNEL_LOG, "w"), stderr=subprocess.STDOUT)
+        return wait_url([r"https://([a-z0-9-]+\.trycloudflare\.com)"], 120)
+    if provider == "ngrok":
+        return start_ngrok()
+    return None
 
 def tunnel_works(u):
     try:
@@ -230,22 +211,32 @@ def tunnel_works(u):
         print("tunnel check failed:", e)
         return False
 
-print("Validating tunnel -> Ollama...")
-ok = False
-for i in range(5):
-    if tunnel_works(url):
-        ok = True
-        break
-    print("retry %d/5..." % (i + 1))
-    time.sleep(10)
-if not ok:
-    print("ERROR: tunnel is up but Ollama is not reachable through it.")
-    try:
-        print("--- tunnel log tail ---")
-        print(open(TUNNEL_LOG).read()[-800:])
-    except Exception:
-        pass
-    print("Tip: create a free ngrok account and set NGROK_AUTHTOKEN in a cell, then rerun.")
+def find_working_tunnel():
+    for provider in ["localhost.run", "serveo.net", "cloudflared", "ngrok"]:
+        u = start_one(provider)
+        if not u:
+            print(provider, ": no URL appeared")
+            continue
+        print(provider, "URL:", u)
+        print("Validating tunnel -> Ollama...")
+        ok = False
+        for i in range(4):
+            if tunnel_works(u):
+                ok = True
+                break
+            print("retry %d/4..." % (i + 1))
+            time.sleep(10)
+        if ok:
+            return u
+        print(provider, ": tunnel up but Ollama not reachable; trying next provider...")
+    return None
+
+url = find_working_tunnel()
+print("[5/5] Tunnel URL:", url)
+if not url:
+    print("FATAL: no working tunnel found. All providers failed.")
+    print("Tip: create a free ngrok account and set NGROK_AUTHTOKEN in a cell:")
+    print("  import os; os.environ['NGROK_AUTHTOKEN'] = 'your_token'")
     raise SystemExit(1)
 
 # 5) Tell Vercel the new tunnel URL (auto-updates, no dashboard needed)
@@ -269,9 +260,7 @@ while True:
         http(url + "/api/version", timeout=10)
     except Exception:
         print("Tunnel died, restarting...")
-        subprocess.run(["pkill", "-f", "ssh"], capture_output=True)
-        time.sleep(3)
-        new_url = start_tunnel()
+        new_url = find_working_tunnel()
         if new_url and new_url != url:
             url = new_url
             register(url)
