@@ -86,8 +86,22 @@ if not os.path.exists(CF_BIN):
     print("FATAL: cloudflared missing at", CF_BIN); raise SystemExit(1)
 print("cloudflared installed.")
 
-# 3) Pull model + build nextgen-trained
-print("[3/5] Pulling %s (about 9 GB, takes a few minutes)..." % MODEL)
+# 3) Start Ollama server first (pull/create need the daemon running)
+print("[3/5] Starting Ollama server...")
+subprocess.Popen([OLLAMA_BIN, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+server_ok = False
+for _ in range(30):
+    try:
+        urllib.request.urlopen("http://localhost:11434/api/version", timeout=3)
+        server_ok = True
+        break
+    except Exception:
+        time.sleep(2)
+if not server_ok:
+    print("FATAL: ollama server did not start."); raise SystemExit(1)
+print("Ollama serving on :11434")
+
+print("Pulling %s (about 9 GB, takes a few minutes)..." % MODEL)
 if not sh(OLLAMA_BIN + " pull " + MODEL, silent=False):
     print("FATAL: model pull failed."); raise SystemExit(1)
 modelfile = '''FROM %s
@@ -103,15 +117,8 @@ if not sh(OLLAMA_BIN + " create nextgen-trained -f /content/Modelfile", silent=F
     print("FATAL: could not create nextgen-trained."); raise SystemExit(1)
 print("nextgen-trained created.")
 
-# 4) Start Ollama server + tunnel
-print("[4/5] Starting Ollama + tunnel...")
-subprocess.Popen([OLLAMA_BIN, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-for _ in range(20):
-    try:
-        urllib.request.urlopen("http://localhost:11434/api/version", timeout=3); break
-    except Exception:
-        time.sleep(2)
-print("Ollama serving on :11434")
+# 4) Start tunnel
+print("[4/5] Starting tunnel...")
 subprocess.Popen(
     [CF_BIN, "tunnel", "--url", "http://%s:11434" % TUNNEL_HOST, "--no-autoupdate"],
     stdout=open("/content/tunnel.log", "w"), stderr=subprocess.STDOUT)
