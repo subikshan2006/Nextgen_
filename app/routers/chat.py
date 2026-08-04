@@ -96,13 +96,18 @@ async def stream_chat(body: ChatRequest, user: User = Depends(get_current_user),
     async def event_gen():
         client = OllamaClient()
         collected = []
+        thinking = []
         yield "event: start\ndata: " + json.dumps({"conversation_id": conv.id, "title": conv.title}) + "\n\n"
         try:
-            async for token in client.chat(
+            async for evt in client.chat(
                 ollama_messages, model=body.model, temperature=0.7, max_tokens=1024,
             ):
-                collected.append(token)
-                yield "data: " + json.dumps({"token": token}) + "\n\n"
+                if evt["t"] == "think":
+                    thinking.append(evt["token"])
+                    yield "data: " + json.dumps({"thinking": evt["token"]}) + "\n\n"
+                else:
+                    collected.append(evt["token"])
+                    yield "data: " + json.dumps({"token": evt["token"]}) + "\n\n"
         except Exception as e:
             yield "event: error\ndata: " + json.dumps({"error": str(e)}) + "\n\n"
             return

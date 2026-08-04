@@ -149,7 +149,11 @@ async function loadModels() {
     for (const m of data.models) {
       const opt = document.createElement("option");
       opt.value = m.name;
-      opt.textContent = m.name;
+      const label = m.name.split(":")[0];
+      const yours = m.name.startsWith("nextgen-trained") ? " (yours)" : "";
+      const size = m.size_gb ? " · " + m.size_gb + "GB" : "";
+      const fast = (m.size_gb ?? 99) < 3 ? " · fast" : "";
+      opt.textContent = label + yours + size + fast;
       pick.appendChild(opt);
     }
     if (data.reachable) { setStatus("Online", true); } else { setStatus("Model server offline", false); }
@@ -180,11 +184,22 @@ async function send() {
       throw new Error(err.detail || "Stream failed");
     }
 
-    // Replace thinking bubble with live response bubble
-    thinking.closest(".msg").className = "msg assistant";
-    thinking.innerHTML = "";
-    const bubble = thinking;
+    // Replace thinking bubble with a reasoning block + separate answer bubble
+    const reasonEl = thinking;
+    reasonEl.closest(".msg").className = "msg assistant thinking";
+    reasonEl.innerHTML = '<div class="reason-toggle">Thinking… <span class="reason-arrow">▾</span><div class="reason-body hidden"></div></div>';
+    const reasonBody = reasonEl.querySelector(".reason-body");
+    const reasonToggle = reasonEl.querySelector(".reason-toggle");
+    reasonToggle.onclick = () => {
+      const collapsed = reasonBody.classList.toggle("hidden");
+      reasonToggle.querySelector(".reason-arrow").textContent = collapsed ? "▸" : "▾";
+      reasonToggle.classList.toggle("expanded", !collapsed);
+    };
+
+    const answerEl = addMsg("assistant", "");
+    const bubble = answerEl;
     let full = "";
+    let reasoning = "";
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -202,13 +217,22 @@ async function send() {
         for (const line of chunk.split("\n")) {
           if (!line.startsWith("data:")) continue;
           const data = JSON.parse(line.slice(5));
-          if (data.token) { full += data.token; bubble.innerHTML = md2html(full); scrollBottom(); }
-          else if (data.error) { bubble.innerHTML = '<span class="bad">Error: ' + escapeHtml(data.error) + "</span>"; streaming = false; $send.disabled = false; return; }
-          else if (data.conversation_id) { currentConvId = data.conversation_id; }
+          if (data.thinking) {
+            reasoning += data.thinking;
+            reasonBody.innerHTML = "<small>" + escapeHtml(reasoning) + "</small>";
+          } else if (data.token) {
+            full += data.token;
+            bubble.innerHTML = md2html(full);
+            scrollBottom();
+          } else if (data.error) {
+            bubble.innerHTML = '<span class="bad">Error: ' + escapeHtml(data.error) + "</span>";
+            streaming = false; $send.disabled = false; return;
+          } else if (data.conversation_id) { currentConvId = data.conversation_id; }
           else if (data.content !== undefined) { full = data.content || full; bubble.innerHTML = md2html(full); scrollBottom(); }
         }
       }
     }
+    if (!reasoning) reasonEl.closest(".msg").remove();
     if (!full.trim()) bubble.innerHTML = '<span class="text-dim">(no response)</span>';
   } catch (err) {
     thinking.innerHTML = '<span class="bad">Error: ' + escapeHtml(err.message) + "</span>";

@@ -47,14 +47,22 @@ class OllamaClient:
         model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
+        think: bool = True,
         on_token=None,
-    ) -> AsyncGenerator[str, None]:
-        """Stream a chat completion. Yields tokens; calls on_token(tok) too."""
+        on_thinking=None,
+    ):
+        """Stream a chat completion.
+
+        Yields dicts: {"t": "tok", "token": str} for answer tokens and
+        {"t": "think", "token": str} for reasoning tokens. Also calls the
+        on_token / on_thinking callbacks if given.
+        """
         model = model or get_settings().default_model
         payload = {
             "model": model,
             "messages": messages,
             "stream": True,
+            "think": think,
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
@@ -75,10 +83,15 @@ class OllamaClient:
                     except (json.JSONDecodeError, ValueError):
                         continue
                     msg = chunk.get("message", {})
-                    token = msg.get("content") or msg.get("thinking") or ""
-                    if token:
+                    thinking = msg.get("thinking") or ""
+                    if thinking:
+                        if on_thinking:
+                            on_thinking(thinking)
+                        yield {"t": "think", "token": thinking}
+                    content = msg.get("content") or ""
+                    if content:
                         if on_token:
-                            on_token(token)
-                        yield token
+                            on_token(content)
+                        yield {"t": "tok", "token": content}
                     if chunk.get("done"):
                         break
