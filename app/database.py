@@ -34,7 +34,7 @@ def init_db():
 
 def _seed_admin():
     """Create the first admin from env config if it doesn't exist."""
-    from passlib.hash import bcrypt
+    import bcrypt
     from .config import get_settings
 
     s = get_settings()
@@ -47,7 +47,9 @@ def _seed_admin():
             admin = User(
                 email=s.admin_email,
                 username=s.admin_email.split("@")[0],
-                password_hash=bcrypt.hash(s.admin_password),
+                password_hash=bcrypt.hashpw(
+                    s.admin_password.encode("utf-8"), bcrypt.gensalt()
+                ).decode("utf-8"),
                 is_admin=True,
                 is_active=True,
             )
