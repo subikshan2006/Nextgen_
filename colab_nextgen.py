@@ -119,9 +119,36 @@ if not sh(OLLAMA_BIN + " create nextgen-trained -f /content/Modelfile", silent=F
     print("FATAL: could not create nextgen-trained."); raise SystemExit(1)
 print("nextgen-trained created.")
 
-# 4) Start a free no-account tunnel (localhost.run -> serveo -> ngrok)
+# 4) Start a free no-account tunnel (cloudflared -> localhost.run -> serveo -> ngrok)
 print("[4/5] Starting tunnel...")
 TUNNEL_LOG = "/content/tunnel.log"
+
+def download_cloudflared():
+    if os.path.exists("/usr/local/bin/cloudflared"):
+        return True
+    print("Downloading cloudflared (free, no account needed)...")
+    if not sh("curl -fsSL -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64", silent=False, timeout=600):
+        print("WARNING: cloudflared download failed")
+        return False
+    sh("chmod +x /tmp/cloudflared")
+    return os.path.exists("/tmp/cloudflared")
+
+def start_cloudflared():
+    if not download_cloudflared():
+        return None
+    print("Starting Cloudflare quick tunnel...")
+    subprocess.Popen(["/tmp/cloudflared", "tunnel", "--no-autoupdate", "--url", "http://localhost:11434"],
+                     stdout=open(TUNNEL_LOG, "w"), stderr=subprocess.STDOUT)
+    for _ in range(60):
+        try:
+            log = open(TUNNEL_LOG).read()
+            m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", log)
+            if m:
+                return m.group(0)
+        except Exception:
+            pass
+        time.sleep(2)
+    return None
 
 def start_ssh_tunnel(host_arg):
     cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
@@ -163,7 +190,13 @@ def start_ngrok():
     return None
 
 def start_tunnel():
-    print("Trying localhost.run...")
+    print("Trying Cloudflare quick tunnel...")
+    url = start_cloudflared()
+    if url:
+        return url
+    print("cloudflared failed; trying localhost.run...")
+    subprocess.run(["pkill", "-f", "cloudflared"], capture_output=True)
+    time.sleep(2)
     url = start_ssh_tunnel("nokey@localhost.run")
     if url:
         return url
