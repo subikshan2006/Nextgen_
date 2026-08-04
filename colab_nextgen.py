@@ -131,7 +131,7 @@ def start_ssh_tunnel(host_arg):
     for _ in range(45):
         try:
             log = open(TUNNEL_LOG).read()
-            m = re.search(r"https://[a-z0-9-]+\.(lhr\.life|serveo\.net|localhost\.run)", log)
+            m = re.search(r"https://[a-z0-9-]+\.(lhr\.life|serveo\.net)", log)
             if m:
                 return m.group(0)
         except Exception:
@@ -207,6 +207,11 @@ for i in range(5):
     time.sleep(10)
 if not ok:
     print("ERROR: tunnel is up but Ollama is not reachable through it.")
+    try:
+        print("--- tunnel log tail ---")
+        print(open(TUNNEL_LOG).read()[-800:])
+    except Exception:
+        pass
     print("Tip: create a free ngrok account and set NGROK_AUTHTOKEN in a cell, then rerun.")
     raise SystemExit(1)
 
