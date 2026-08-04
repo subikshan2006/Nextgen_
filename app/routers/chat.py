@@ -99,7 +99,7 @@ async def stream_chat(body: ChatRequest, user: User = Depends(get_current_user),
         yield "event: start\ndata: " + json.dumps({"conversation_id": conv.id, "title": conv.title}) + "\n\n"
         try:
             async for token in client.chat(
-                ollama_messages, model=body.model, temperature=0.7, max_tokens=2048,
+                ollama_messages, model=body.model, temperature=0.7, max_tokens=1024,
             ):
                 collected.append(token)
                 yield "data: " + json.dumps({"token": token}) + "\n\n"

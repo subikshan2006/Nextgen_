@@ -46,7 +46,7 @@ class OllamaClient:
         messages: List[Dict],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2048,
+        max_tokens: int = 1024,
         on_token=None,
     ) -> AsyncGenerator[str, None]:
         """Stream a chat completion. Yields tokens; calls on_token(tok) too."""
