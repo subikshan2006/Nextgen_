@@ -60,18 +60,20 @@ os.environ["PATH"] = "/usr/local/bin:" + os.environ.get("PATH", "")
 # 1) Install Ollama (free, from ollama.com)
 print("[1/5] Installing Ollama...")
 if not os.path.exists(OLLAMA_BIN):
-    print("Installing zstd (required by ollama installer)...")
+    print("Installing zstd (needed to unpack ollama)...")
     sh("apt-get update -qq && apt-get install -y -qq zstd", silent=False, timeout=600)
-    print("Running ollama install script...")
-    sh("curl -fsSL https://ollama.com/install.sh | sh", silent=False, timeout=3600)
-if not os.path.exists(OLLAMA_BIN):
-    print("Install script failed; extracting manually...")
+    if not (os.path.exists("/usr/bin/zstd") or os.path.exists("/bin/zstd")):
+        print("WARNING: zstd binary not found, unpacking may fail")
+    print("Downloading ollama (about 1.4 GB, a couple minutes)...")
     sh("curl -fsSL -o /tmp/ollama.tar.zst https://ollama.com/download/ollama-linux-amd64.tar.zst", silent=False, timeout=3600)
-    sh("zstd -d -f /tmp/ollama.tar.zst -o /tmp/ollama.tar", silent=False)
-    sh("tar -xf /tmp/ollama.tar -C /usr/local", silent=False)
+    print("Unpacking to /usr/local...")
+    sh("zstd -d -f /tmp/ollama.tar.zst -o /tmp/ollama.tar", silent=False, timeout=600)
+    sh("tar -xf /tmp/ollama.tar -C /usr/local", silent=False, timeout=600)
     sh("chmod +x " + OLLAMA_BIN)
 if not os.path.exists(OLLAMA_BIN):
-    print("FATAL: ollama binary missing at", OLLAMA_BIN); raise SystemExit(1)
+    print("FATAL: ollama binary missing at", OLLAMA_BIN)
+    sh("ls -la /usr/local/bin 2>/dev/null | grep -i ollama; ls -la /tmp | grep ollama", silent=False)
+    raise SystemExit(1)
 sh(OLLAMA_BIN + " --version", silent=False)
 print("Ollama installed.")
 
