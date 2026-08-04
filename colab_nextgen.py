@@ -1,11 +1,9 @@
 # ==================================================
 #  NEXTGEN AI - FREE GPU RUNNER (Google Colab)
 #  Runs your model on Colab's free T4 GPU.
-#  Usage (only 2 lines in the cell):
-#    !wget -q -O /content/nextgen.py https://raw.githubusercontent.com/subikshan2006/Nextgen_/main/colab_nextgen.py
-#    exec(open('/content/nextgen.py').read())
-#
-#  Requirements: Runtime -> Change runtime type -> T4 GPU
+#  Usage:
+#    Open https://colab.research.google.com/github/subikshan2006/Nextgen_/blob/main/colab_nextgen.ipynb
+#    Then Runtime -> Run all
 #  Keep this tab open & connected (session stops ~12h).
 #  ==================================================
 import json, os, re, subprocess, time, urllib.request
@@ -16,7 +14,7 @@ ADMIN_PASSWORD = "admin12345"                          # <- your admin password
 MODEL          = "qwen3:14b"   # nextgen-trained base; qwen3:8b = faster
 TUNNEL_HOST    = "localhost"
 OLLAMA_BIN     = "/usr/local/bin/ollama"
-CF_BIN         = "/usr/local/bin/cloudflared"
+BROWSER_UA     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
 def sh(cmd, silent=True, timeout=1800):
     if not silent: print(">", cmd[:140])
@@ -28,10 +26,19 @@ def sh(cmd, silent=True, timeout=1800):
     except Exception as e:
         print("cmd failed:", e); return False
 
+def http(url, data=None, timeout=30):
+    h = {"User-Agent": BROWSER_UA}
+    if data is not None:
+        h["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=(json.dumps(data).encode() if data is not None else None), headers=h)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        body = r.read()
+        return json.loads(body) if body else {}
+
 def post(path, data, token=None):
     req = urllib.request.Request(
         VERCEL_URL + path, data=json.dumps(data).encode(),
-        headers={"Content-Type": "application/json"})
+        headers={"Content-Type": "application/json", "User-Agent": BROWSER_UA})
     if token: req.add_header("Authorization", "Bearer " + token)
     with urllib.request.urlopen(req, timeout=30) as r: return json.loads(r.read())
 
@@ -77,14 +84,9 @@ if not os.path.exists(OLLAMA_BIN):
 sh(OLLAMA_BIN + " --version", silent=False)
 print("Ollama installed.")
 
-# 2) Install cloudflared tunnel (free)
-print("[2/5] Installing tunnel...")
-if not os.path.exists(CF_BIN):
-    sh("wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O " + CF_BIN, silent=False)
-    sh("chmod +x " + CF_BIN)
-if not os.path.exists(CF_BIN):
-    print("FATAL: cloudflared missing at", CF_BIN); raise SystemExit(1)
-print("cloudflared installed.")
+# 2) Install openssh-client for the free no-account tunnel
+print("[2/5] Installing tunnel tool (openssh)...")
+sh("apt-get install -y -qq openssh-client", silent=False, timeout=600)
 
 # 3) Start Ollama server first (pull/create need the daemon running)
 print("[3/5] Starting Ollama server...")
@@ -92,7 +94,7 @@ subprocess.Popen([OLLAMA_BIN, "serve"], stdout=subprocess.DEVNULL, stderr=subpro
 server_ok = False
 for _ in range(30):
     try:
-        urllib.request.urlopen("http://localhost:11434/api/version", timeout=3)
+        http("http://localhost:11434/api/version", timeout=3)
         server_ok = True
         break
     except Exception:
@@ -117,37 +119,80 @@ if not sh(OLLAMA_BIN + " create nextgen-trained -f /content/Modelfile", silent=F
     print("FATAL: could not create nextgen-trained."); raise SystemExit(1)
 print("nextgen-trained created.")
 
-# 4) Start tunnel
+# 4) Start a free no-account tunnel (localhost.run -> serveo -> ngrok)
 print("[4/5] Starting tunnel...")
-subprocess.Popen(
-    [CF_BIN, "tunnel", "--url", "http://%s:11434" % TUNNEL_HOST, "--no-autoupdate"],
-    stdout=open("/content/tunnel.log", "w"), stderr=subprocess.STDOUT)
+TUNNEL_LOG = "/content/tunnel.log"
 
-def get_tunnel_url():
-    for _ in range(90):
+def start_ssh_tunnel(host_arg):
+    cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+           "-o", "ServerAliveInterval=60", "-o", "ServerAliveCountMax=3",
+           "-o", "ExitOnForwardFailure=yes", "-N", "-R", "80:localhost:11434", host_arg]
+    subprocess.Popen(cmd, stdout=open(TUNNEL_LOG, "w"), stderr=subprocess.STDOUT)
+    for _ in range(45):
         try:
-            log = open("/content/tunnel.log").read()
-            m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", log)
-            if m: return m.group(0)
+            log = open(TUNNEL_LOG).read()
+            m = re.search(r"https://[a-z0-9-]+\.(lhr\.life|serveo\.net|localhost\.run)", log)
+            if m:
+                return m.group(0)
         except Exception:
             pass
         time.sleep(3)
     return None
 
-url = get_tunnel_url()
+def start_ngrok():
+    tok = os.environ.get("NGROK_AUTHTOKEN", "").strip()
+    if not tok:
+        return None
+    print("Using ngrok fallback...")
+    if not os.path.exists("/tmp/ngrok"):
+        sh("curl -fsSL -o /tmp/ngrok.tgz https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz", silent=False, timeout=600)
+        sh("tar -xzf /tmp/ngrok.tgz -C /tmp", silent=False)
+    sh("/tmp/ngrok config add-authtoken " + tok, silent=False)
+    subprocess.Popen(["/tmp/ngrok", "http", "11434", "--log", "stdout"],
+                     stdout=open("/content/ngrok.log", "w"), stderr=subprocess.STDOUT)
+    for _ in range(40):
+        try:
+            for line in open("/content/ngrok.log"):
+                if "https://" in line:
+                    m = re.search(r"https://[a-z0-9-]+\.ngrok\.(io|app)", line)
+                    if m:
+                        return m.group(0)
+        except Exception:
+            pass
+        time.sleep(2)
+    return None
+
+def start_tunnel():
+    print("Trying localhost.run...")
+    url = start_ssh_tunnel("nokey@localhost.run")
+    if url:
+        return url
+    print("localhost.run failed; trying serveo.net...")
+    subprocess.run(["pkill", "-f", "localhost.run"], capture_output=True)
+    time.sleep(2)
+    url = start_ssh_tunnel("serveo.net")
+    if url:
+        return url
+    print("serveo failed; trying ngrok (set NGROK_AUTHTOKEN if you have one)...")
+    subprocess.run(["pkill", "-f", "serveo.net"], capture_output=True)
+    time.sleep(2)
+    return start_ngrok()
+
+url = start_tunnel()
 print("[5/5] Tunnel URL:", url)
 if not url:
-    print("FATAL: no tunnel URL appeared. Check cloudflared."); raise SystemExit(1)
+    print("FATAL: no tunnel URL appeared. All tunnel providers failed.")
+    print("Tip: create a free ngrok account and set NGROK_AUTHTOKEN in a cell:")
+    print("  import os; os.environ['NGROK_AUTHTOKEN'] = 'your_token'")
+    raise SystemExit(1)
 
 def tunnel_works(u):
     try:
-        req = urllib.request.Request(
-            u + "/api/chat",
-            data=json.dumps({"model": MODEL, "messages": [{"role": "user", "content": "ping"}],
-                             "stream": False, "options": {"num_predict": 2}}).encode(),
-            headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=180) as r:
-            return bool(json.loads(r.read()).get("message"))
+        r = http(u + "/api/chat",
+                 {"model": MODEL, "messages": [{"role": "user", "content": "ping"}],
+                  "stream": False, "options": {"num_predict": 2}},
+                 timeout=180)
+        return bool(r.get("message"))
     except Exception as e:
         print("tunnel check failed:", e)
         return False
@@ -161,17 +206,20 @@ for i in range(5):
     print("retry %d/5..." % (i + 1))
     time.sleep(10)
 if not ok:
-    print("ERROR: tunnel is up but Ollama is not reachable through it (Cloudflare edge 403/SSE issue).")
-    print("Paste your ngrok authtoken as NGROK_AUTHTOKEN in a cell and rerun, or ask the assistant.")
+    print("ERROR: tunnel is up but Ollama is not reachable through it.")
+    print("Tip: create a free ngrok account and set NGROK_AUTHTOKEN in a cell, then rerun.")
     raise SystemExit(1)
 
 # 5) Tell Vercel the new tunnel URL (auto-updates, no dashboard needed)
-try:
-    tok = post("/api/auth/login", {"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD})["access_token"]
-    post("/api/admin/ollama_url", {"url": url}, token=tok)
-    print("Registered tunnel with Vercel. App live:", VERCEL_URL)
-except Exception as e:
-    print("Could not auto-register:", e, "(set OLLAMA_URL manually in Vercel)")
+def register(u):
+    try:
+        tok = post("/api/auth/login", {"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD})["access_token"]
+        post("/api/admin/ollama_url", {"url": u}, token=tok)
+        print("Registered tunnel with Vercel. App live:", VERCEL_URL)
+    except Exception as e:
+        print("Could not auto-register:", e, "(set OLLAMA_URL manually in Vercel)")
+
+register(url)
 
 print("\nKEEP THIS TAB OPEN. It stops after ~12h; just press Play again.")
 print("Monitoring tunnel...")
@@ -180,18 +228,13 @@ print("Monitoring tunnel...")
 while True:
     time.sleep(60)
     try:
-        urllib.request.urlopen(url + "/api/version", timeout=10)
+        http(url + "/api/version", timeout=10)
     except Exception:
         print("Tunnel died, restarting...")
-        subprocess.Popen(
-            [CF_BIN, "tunnel", "--url", "http://%s:11434" % TUNNEL_HOST, "--no-autoupdate"],
-            stdout=open("/content/tunnel.log", "w"), stderr=subprocess.STDOUT)
-        new_url = get_tunnel_url()
+        subprocess.run(["pkill", "-f", "ssh"], capture_output=True)
+        time.sleep(3)
+        new_url = start_tunnel()
         if new_url and new_url != url:
             url = new_url
-            try:
-                tok = post("/api/auth/login", {"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD})["access_token"]
-                post("/api/admin/ollama_url", {"url": url}, token=tok)
-                print("New tunnel registered:", url)
-            except Exception:
-                pass
+            register(url)
+            print("New tunnel:", url)

@@ -10,13 +10,23 @@ import aiohttp
 
 from ..config import get_settings
 
+# Some tunnel providers (e.g. Cloudflare quick tunnels) return 403 for
+# requests without a browser-like User-Agent.
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
+
 
 class OllamaClient:
     def __init__(self, base_url: Optional[str] = None):
         self.base_url = (base_url or get_settings().ollama_url).rstrip("/")
+        self._headers = {"User-Agent": _BROWSER_UA}
 
     async def _get(self, path: str):
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as s:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=10), headers=self._headers
+        ) as s:
             async with s.get(f"{self.base_url}{path}") as r:
                 r.raise_for_status()
                 return await r.json()
@@ -69,7 +79,7 @@ class OllamaClient:
             },
         }
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=600, sock_read=300)
+            timeout=aiohttp.ClientTimeout(total=600, sock_read=300), headers=self._headers
         ) as s:
             async with s.post(f"{self.base_url}/api/chat", json=payload) as r:
                 if r.status != 200:
