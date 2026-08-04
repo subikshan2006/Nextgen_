@@ -25,6 +25,11 @@ SessionLocal = None
 
 def init_db():
     global engine, SessionLocal
+    url = get_settings().database_url
+    if url.startswith("sqlite"):
+        # Vercel serverless filesystems are read-only: SQLite cannot persist.
+        # Only use it for LOCAL development.
+        pass
     engine = get_engine()
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
