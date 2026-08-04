@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXTGEN AI — Admin</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="admin-wrap">
+  <h1>Admin Panel</h1>
+  <a class="back" href="/">← Back to chat</a>
+  <div class="error-box" id="error"></div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>System status</h3>
+      <div class="status-row"><span>App</span><span id="s-app">—</span></div>
+      <div class="status-row"><span>Version</span><span id="s-ver">—</span></div>
+      <div class="status-row"><span>Database</span><span id="s-db">—</span></div>
+      <div class="status-row"><span>Ollama</span><span id="s-ollama">…</span></div>
+      <div class="status-row"><span>Users</span><span id="s-users">—</span></div>
+      <div class="status-row"><span>Conversations</span><span id="s-convs">—</span></div>
+      <button class="btn-ghost" style="margin-top:12px" id="refresh">Refresh</button>
+    </div>
+
+    <div class="card">
+      <h3>Available models (Ollama)</h3>
+      <div class="model-list" id="model-list"><span class="text-dim">Loading…</span></div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card" style="grid-column: 1 / -1">
+      <h3>Users</h3>
+      <div style="overflow-x:auto">
+        <table id="user-table">
+          <thead>
+            <tr><th>ID</th><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Default system prompt</h3>
+      <textarea id="sys-prompt" rows="6" style="width:100%;background:var(--bg-3);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px;font-size:13px">You are NEXTGEN AI — a fully autonomous AI software engineering operating system.</textarea>
+      <button class="btn-ghost" style="margin-top:10px" id="save-prompt">Save locally (this browser)</button>
+    </div>
+
+    <div class="card">
+      <h3>Quick actions</h3>
+      <button class="btn-ghost" id="btn-ping" style="margin-bottom:8px">Test Ollama connection</button>
+      <button class="btn-ghost" id="btn-example" style="margin-bottom:8px">Ask: "What can you do?"</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/common.js"></script>
+<script>
+const user = getCurrentUser();
+if (!user) window.location.href = "/login";
+if (!user.is_admin) { window.location.href = "/"; }
+
+function showError(msg) {
+  const el = document.getElementById("error");
+  el.textContent = msg;
+  el.classList.add("show");
+}
+
+function loadStatus() {
+  api("/admin/status").then((s) => {
+    document.getElementById("s-app").textContent = s.app;
+    document.getElementById("s-ver").textContent = s.version;
+    document.getElementById("s-db").textContent = s.database;
+    const ol = document.getElementById("s-ollama");
+    ol.innerHTML = s.ollama.reachable ? '<span class="ok">● Online</span>' : '<span class="bad">● Offline</span>';
+    document.getElementById("s-users").textContent = s.total_users;
+    document.getElementById("s-convs").textContent = s.total_conversations;
+  }).catch(showError);
+}
+
+function loadModels() {
+  api("/admin/models").then((ms) => {
+    const list = document.getElementById("model-list");
+    list.innerHTML = ms.length
+      ? ms.map(m => '<div class="model-row"><span>' + escapeHtml(m.name) + '</span><span class="sz">' + (m.size_gb ?? "?") + ' GB</span></div>').join("")
+      : '<span class="text-dim">No models (Ollama offline)</span>';
+  }).catch(showError);
+}
+
+function loadUsers() {
+  api("/admin/users").then((us) => {
+    const tbody = document.querySelector("#user-table tbody");
+    tbody.innerHTML = "";
+    for (const u of us) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = '<td>' + u.id + '</td>' +
+        '<td>' + escapeHtml(u.username) + (u.id === user.id ? " (you)" : "") + '</td>' +
+        '<td>' + escapeHtml(u.email) + '</td>' +
+        '<td><button class="toggle' + (u.is_admin ? ' admin-on">Admin' : '">Make admin') + '</button></td>' +
+        '<td><button class="toggle">' + (u.is_active ? "Active" : "Disabled") + '</button></td>' +
+        '<td style="color:var(--text-dim)">' + escapeHtml(String(u.created_at || "").slice(0, 10)) + '</td>' +
+        '<td>' + (u.id === user.id ? "" : '<button class="toggle danger">Delete</button>') + '</td>';
+      tr.querySelectorAll("button")[0].onclick = () => api("/admin/users/" + u.id, {
+        method: "PATCH", body: JSON.stringify({ is_admin: !u.is_admin })
+      }).then(loadUsers).catch(showError);
+      tr.querySelectorAll("button")[1].onclick = () => api("/admin/users/" + u.id, {
+        method: "PATCH", body: JSON.stringify({ is_active: !u.is_active })
+      }).then(loadUsers).catch(showError);
+      const delBtn = tr.querySelectorAll("button")[2];
+      if (delBtn) delBtn.onclick = () => {
+        if (confirm("Delete user " + u.username + "?")) {
+          api("/admin/users/" + u.id, { method: "DELETE" }).then(loadUsers).catch(showError);
+        }
+      };
+      tbody.appendChild(tr);
+    }
+  }).catch(showError);
+}
+
+document.getElementById("refresh").onclick = () => { loadStatus(); loadModels(); loadUsers(); };
+document.getElementById("btn-ping").onclick = () => { loadStatus(); loadModels(); };
+document.getElementById("btn-example").onclick = () => { window.location.href = "/"; };
+document.getElementById("save-prompt").onclick = () => {
+  localStorage.setItem("nextgen_sysprompt", document.getElementById("sys-prompt").value);
+  document.getElementById("error").textContent = "Saved (browser only).";
+  document.getElementById("error").style.display = "block";
+  setTimeout(() => { document.getElementById("error").style.display = "none"; }, 2000);
+};
+
+loadStatus(); loadModels(); loadUsers();
+</script>
+</body>
+</html>

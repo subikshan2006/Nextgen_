@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEXTGEN AI — Sign in</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1>NEXTGEN AI</h1>
+    <p class="sub">Your own AI — trained locally, runs for you.</p>
+    <div class="error-box" id="error"></div>
+
+    <div id="login-view">
+      <form id="login-form">
+        <div class="field">
+          <label for="login-username">Username</label>
+          <input id="login-username" type="text" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="login-password">Password</label>
+          <input id="login-password" type="password" autocomplete="current-password" required>
+        </div>
+        <button class="btn" type="submit">Sign in</button>
+      </form>
+      <div class="switch">New here? <a href="#" id="show-register">Create an account</a></div>
+    </div>
+
+    <div id="register-view" class="hidden">
+      <form id="register-form">
+        <div class="field">
+          <label for="reg-email">Email</label>
+          <input id="reg-email" type="email" required>
+        </div>
+        <div class="field">
+          <label for="reg-username">Username</label>
+          <input id="reg-username" type="text" minlength="3" required>
+        </div>
+        <div class="field">
+          <label for="reg-password">Password (6+ chars)</label>
+          <input id="reg-password" type="password" minlength="6" required>
+        </div>
+        <button class="btn" type="submit">Create account</button>
+      </form>
+      <div class="switch">Already have an account? <a href="#" id="show-login">Sign in</a></div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/common.js"></script>
+<script>
+function showError(msg) {
+  const el = document.getElementById("error");
+  el.textContent = msg;
+  el.classList.add("show");
+}
+function clearError() {
+  document.getElementById("error").classList.remove("show");
+}
+
+document.getElementById("show-register").onclick = (e) => {
+  e.preventDefault(); clearError();
+  document.getElementById("login-view").classList.add("hidden");
+  document.getElementById("register-view").classList.remove("hidden");
+};
+document.getElementById("show-login").onclick = (e) => {
+  e.preventDefault(); clearError();
+  document.getElementById("register-view").classList.add("hidden");
+  document.getElementById("login-view").classList.remove("hidden");
+};
+
+document.getElementById("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault(); clearError();
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
+  try {
+    const data = await api("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: document.getElementById("login-username").value,
+        password: document.getElementById("login-password").value,
+      }),
+    });
+    setToken(data.access_token);
+    setCurrentUser(data.user);
+    window.location.href = "/";
+  } catch (err) { showError(err.message); }
+  finally { btn.disabled = false; }
+});
+
+document.getElementById("register-form").addEventListener("submit", async (e) => {
+  e.preventDefault(); clearError();
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
+  try {
+    const data = await api("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: document.getElementById("reg-email").value,
+        username: document.getElementById("reg-username").value,
+        password: document.getElementById("reg-password").value,
+      }),
+    });
+    setToken(data.access_token);
+    setCurrentUser(data.user);
+    window.location.href = "/";
+  } catch (err) { showError(err.message); }
+  finally { btn.disabled = false; }
+});
+
+if (getToken()) window.location.href = "/";
+</script>
+</body>
+</html>
