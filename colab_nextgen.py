@@ -1,27 +1,29 @@
 # ==================================================
 #  NEXTGEN AI - FREE GPU RUNNER (Google Colab)
 #  Runs your model on Colab's free T4 GPU.
-#  Steps:
-#    1. Open https://colab.research.google.com
-#    2. File -> New notebook
-#    3. Paste ALL of this into the single code cell
-#    4. Edit VERCELL_URL / ADMIN creds below if needed
-#    5. Press Play (runtime -> Run all)
-#    6. Keep this tab open & connected (it stops ~12h)
+#  Usage (only 2 lines in the cell):
+#    !wget -q -O /content/nextgen.py https://raw.githubusercontent.com/subikshan2006/Nextgen_/main/colab_nextgen.py
+#    exec(open('/content/nextgen.py').read())
+#
+#  Requirements: Runtime -> Change runtime type -> T4 GPU
+#  Keep this tab open & connected (session stops ~12h).
 #  ==================================================
 import json, os, re, subprocess, time, urllib.request
 
-VERCEL_URL    = "https://nextgen-web-eta.vercel.app"  # <- your Vercel app
-ADMIN_USERNAME = "admin"                              # <- your admin username
-ADMIN_PASSWORD = "admin12345"                         # <- your admin password
-MODEL         = "qwen3:14b"   # nextgen-trained base; qwen3:8b = faster
-TUNNEL_HOST   = "localhost"   # keep as-is
+VERCEL_URL     = "https://nextgen-web-eta.vercel.app"  # <- your Vercel app
+ADMIN_USERNAME = "admin"                               # <- your admin username
+ADMIN_PASSWORD = "admin12345"                          # <- your admin password
+MODEL          = "qwen3:14b"   # nextgen-trained base; qwen3:8b = faster
+TUNNEL_HOST    = "localhost"
+OLLAMA_BIN     = "/usr/local/bin/ollama"
+CF_BIN         = "/usr/local/bin/cloudflared"
 
-def sh(cmd, silent=True):
+def sh(cmd, silent=True, timeout=1800):
     if not silent: print(">", cmd[:140])
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=1200)
-        if r.returncode != 0 and not silent: print(r.stderr[-400:])
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        if r.returncode != 0 and not silent:
+            print("stderr:", r.stderr[-600:])
         return r.returncode == 0
     except Exception as e:
         print("cmd failed:", e); return False
@@ -35,26 +37,49 @@ def post(path, data, token=None):
 
 print("NEXTGEN AI GPU runner starting...")
 
-import os as _os
-if _os.path.exists("/dev/nvidia0"):
-    print("GPU detected.")
-else:
-    print("WARNING: no NVIDIA GPU detected - using CPU (slow). Runtime -> Change runtime type -> T4 GPU.")
+# 0) Hard GPU check - do not waste time on CPU
+print("Checking GPU...")
+def have_gpu():
+    if any(os.path.exists(p) for p in ("/dev/nvidia0", "/dev/nvidia1")):
+        return True
+    try:
+        return subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True).returncode == 0
+    except Exception:
+        return False
+
+if not have_gpu():
+    print("NO NVIDIA GPU DETECTED.")
+    print("Menu: Runtime -> Change runtime type -> Hardware accelerator: T4 GPU -> Save")
+    print("Then press the play button again.")
+    raise SystemExit(1)
+print("GPU OK.")
+
+# ensure /usr/local/bin on PATH for subprocess
+os.environ["PATH"] = "/usr/local/bin:" + os.environ.get("PATH", "")
 
 # 1) Install Ollama (free, from ollama.com)
 print("[1/5] Installing Ollama...")
-if not os.path.exists("/usr/local/bin/ollama"):
-    sh("curl -fsSL https://ollama.com/install.sh | sh")
+if not os.path.exists(OLLAMA_BIN):
+    if not sh("curl -fsSL https://ollama.com/install.sh | sh", silent=False):
+        print("First attempt failed, retrying...")
+        sh("curl -fsSL https://ollama.com/install.sh | sh", silent=False)
+if not os.path.exists(OLLAMA_BIN):
+    print("FATAL: ollama binary missing at", OLLAMA_BIN); raise SystemExit(1)
+print("Ollama installed.")
 
 # 2) Install cloudflared tunnel (free)
 print("[2/5] Installing tunnel...")
-if not os.path.exists("/usr/local/bin/cloudflared"):
-    sh("wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /usr/local/bin/cloudflared")
-    sh("chmod +x /usr/local/bin/cloudflared")
+if not os.path.exists(CF_BIN):
+    sh("wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O " + CF_BIN, silent=False)
+    sh("chmod +x " + CF_BIN)
+if not os.path.exists(CF_BIN):
+    print("FATAL: cloudflared missing at", CF_BIN); raise SystemExit(1)
+print("cloudflared installed.")
 
-# 3) Build nextgen-trained = MODEL + your Modelfile (no big uploads needed)
-print("[3/5] Pulling %s and creating nextgen-trained..." % MODEL)
-sh("ollama pull " + MODEL)
+# 3) Pull model + build nextgen-trained
+print("[3/5] Pulling %s (about 9 GB, takes a few minutes)..." % MODEL)
+if not sh(OLLAMA_BIN + " pull " + MODEL, silent=False):
+    print("FATAL: model pull failed."); raise SystemExit(1)
 modelfile = '''FROM %s
 
 SYSTEM "You are NEXTGEN AI v20, a fully autonomous AI software engineering operating system. Provide concise, actionable responses. Write complete, working code. Use markdown for formatting."
@@ -64,14 +89,21 @@ PARAMETER top_p 0.9
 PARAMETER num_ctx 8192
 ''' % MODEL
 with open("/content/Modelfile", "w") as f: f.write(modelfile)
-sh("ollama create nextgen-trained -f /content/Modelfile")
+if not sh(OLLAMA_BIN + " create nextgen-trained -f /content/Modelfile", silent=False):
+    print("FATAL: could not create nextgen-trained."); raise SystemExit(1)
+print("nextgen-trained created.")
 
 # 4) Start Ollama server + tunnel
 print("[4/5] Starting Ollama + tunnel...")
-subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-time.sleep(8)
+subprocess.Popen([OLLAMA_BIN, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+for _ in range(20):
+    try:
+        urllib.request.urlopen("http://localhost:11434/api/version", timeout=3); break
+    except Exception:
+        time.sleep(2)
+print("Ollama serving on :11434")
 subprocess.Popen(
-    ["cloudflared", "tunnel", "--url", "http://%s:11434" % TUNNEL_HOST, "--no-autoupdate"],
+    [CF_BIN, "tunnel", "--url", "http://%s:11434" % TUNNEL_HOST, "--no-autoupdate"],
     stdout=open("/content/tunnel.log", "w"), stderr=subprocess.STDOUT)
 
 def get_tunnel_url():
@@ -80,14 +112,15 @@ def get_tunnel_url():
             log = open("/content/tunnel.log").read()
             m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", log)
             if m: return m.group(0)
-        except Exception: pass
+        except Exception:
+            pass
         time.sleep(3)
     return None
 
 url = get_tunnel_url()
 print("[5/5] Tunnel URL:", url)
 if not url:
-    print("FATAL: no tunnel URL appeared. Check cloudflared install."); raise SystemExit(1)
+    print("FATAL: no tunnel URL appeared. Check cloudflared."); raise SystemExit(1)
 
 def tunnel_works(u):
     try:
@@ -96,7 +129,7 @@ def tunnel_works(u):
             data=json.dumps({"model": MODEL, "messages": [{"role": "user", "content": "ping"}],
                              "stream": False, "options": {"num_predict": 2}}).encode(),
             headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=90) as r:
+        with urllib.request.urlopen(req, timeout=180) as r:
             return bool(json.loads(r.read()).get("message"))
     except Exception as e:
         print("tunnel check failed:", e)
@@ -134,7 +167,7 @@ while True:
     except Exception:
         print("Tunnel died, restarting...")
         subprocess.Popen(
-            ["cloudflared", "tunnel", "--url", "http://%s:11434" % TUNNEL_HOST, "--no-autoupdate"],
+            [CF_BIN, "tunnel", "--url", "http://%s:11434" % TUNNEL_HOST, "--no-autoupdate"],
             stdout=open("/content/tunnel.log", "w"), stderr=subprocess.STDOUT)
         new_url = get_tunnel_url()
         if new_url and new_url != url:
@@ -143,4 +176,5 @@ while True:
                 tok = post("/api/auth/login", {"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD})["access_token"]
                 post("/api/admin/ollama_url", {"url": url}, token=tok)
                 print("New tunnel registered:", url)
-            except Exception: pass
+            except Exception:
+                pass
