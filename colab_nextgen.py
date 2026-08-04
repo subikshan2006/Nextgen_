@@ -35,6 +35,12 @@ def post(path, data, token=None):
 
 print("NEXTGEN AI GPU runner starting...")
 
+import os as _os
+if _os.path.exists("/dev/nvidia0"):
+    print("GPU detected.")
+else:
+    print("WARNING: no NVIDIA GPU detected - using CPU (slow). Runtime -> Change runtime type -> T4 GPU.")
+
 # 1) Install Ollama (free, from ollama.com)
 print("[1/5] Installing Ollama...")
 if not os.path.exists("/usr/local/bin/ollama"):
@@ -80,6 +86,34 @@ def get_tunnel_url():
 
 url = get_tunnel_url()
 print("[5/5] Tunnel URL:", url)
+if not url:
+    print("FATAL: no tunnel URL appeared. Check cloudflared install."); raise SystemExit(1)
+
+def tunnel_works(u):
+    try:
+        req = urllib.request.Request(
+            u + "/api/chat",
+            data=json.dumps({"model": MODEL, "messages": [{"role": "user", "content": "ping"}],
+                             "stream": False, "options": {"num_predict": 2}}).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=90) as r:
+            return bool(json.loads(r.read()).get("message"))
+    except Exception as e:
+        print("tunnel check failed:", e)
+        return False
+
+print("Validating tunnel -> Ollama...")
+ok = False
+for i in range(5):
+    if tunnel_works(url):
+        ok = True
+        break
+    print("retry %d/5..." % (i + 1))
+    time.sleep(10)
+if not ok:
+    print("ERROR: tunnel is up but Ollama is not reachable through it (Cloudflare edge 403/SSE issue).")
+    print("Paste your ngrok authtoken as NGROK_AUTHTOKEN in a cell and rerun, or ask the assistant.")
+    raise SystemExit(1)
 
 # 5) Tell Vercel the new tunnel URL (auto-updates, no dashboard needed)
 try:
