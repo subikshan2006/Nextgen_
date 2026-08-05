@@ -54,13 +54,28 @@ def health():
 
 @app.get("/api/models")
 async def public_models():
-    from .database import get_db, get_ollama_url
-    from .services.ollama import OllamaClient
+    import datetime as _dt
+
+    from .database import get_db
+    from .models import ApiSetting
 
     db = get_db().__next__()
     try:
-        client = OllamaClient(get_ollama_url(db))
-        return {"models": await client.list_models(), "reachable": await client.check()}
+        row = db.query(ApiSetting).filter(ApiSetting.key == "worker_last_seen").first()
+        online = False
+        if row and row.value:
+            try:
+                last = float(row.value)
+                online = (_dt.datetime.utcnow().timestamp() - last) < 180
+            except Exception:
+                pass
+        models = []
+        if online:
+            models = [
+                {"name": "nextgen-trained", "size_gb": None},
+                {"name": "qwen3:14b", "size_gb": None},
+            ]
+        return {"models": models, "reachable": online, "worker_online": online}
     finally:
         db.close()
 

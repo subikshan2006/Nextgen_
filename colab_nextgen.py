@@ -123,6 +123,9 @@ def poll_jobs(token):
     r = http(VERCEL_URL + "/api/worker/poll?limit=3", token=token, timeout=30)
     return r.get("jobs", [])
 
+def heartbeat(token):
+    http(VERCEL_URL + "/api/worker/heartbeat", {"t": 1}, token=token, timeout=15)
+
 def complete(token, job_id, response=None, error=None):
     payload = {"job_id": job_id}
     if error:
@@ -141,10 +144,14 @@ print("[4/4] Worker online. Polling for jobs every 3 seconds...")
 print("KEEP THIS TAB OPEN. It stops after ~12h; just press Play again.")
 
 token = None
+beat_count = 0
 while True:
     try:
         if token is None:
             token = login()
+        beat_count += 1
+        if beat_count % 20 == 0:
+            heartbeat(token)   # every ~60s: mark the worker as online
         jobs = poll_jobs(token)
         for jb in jobs:
             jid = jb["job_id"]

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user
 from ..config import get_settings
 from ..database import get_db
-from ..models import ChatJob, Conversation, Message, User
+from ..models import ApiSetting, ChatJob, Conversation, Message, User
 from ..schemas import WorkerCompleteIn
 
 router = APIRouter(prefix="/api/worker", tags=["worker"])
@@ -66,6 +66,23 @@ def poll_jobs(
         })
     db.commit()
     return {"jobs": out}
+
+
+@router.post("/heartbeat")
+def heartbeat(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Called periodically by the GPU worker so the site knows it is alive."""
+    _require_admin(user)
+    ts = str(datetime.datetime.utcnow().timestamp())
+    row = db.query(ApiSetting).filter(ApiSetting.key == "worker_last_seen").first()
+    if row:
+        row.value = ts
+    else:
+        db.add(ApiSetting(key="worker_last_seen", value=ts))
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/complete")
