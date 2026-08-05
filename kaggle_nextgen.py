@@ -1,17 +1,22 @@
 # ==================================================
-#  NEXTGEN AI - FREE GPU RUNNER (Kaggle)
-#  Runs your model on Kaggle's free P100/T4 GPU.
-#  ~30 GPU hrs/week free; sessions last ~9h.
+#  NEXTGEN AI - FREE GPU WORKER (Google Colab)
+#  Runs your model on Colab's free T4 GPU.
+#  The worker POLLS the deployed site for chat jobs
+#  (no tunnel needed - Colab only makes outbound HTTPS).
+#  Usage:
+#    Open https://colab.research.google.com/github/subikshan2006/Nextgen_/blob/main/colab_nextgen.ipynb
+#    Then Runtime -> Run all
+#  Keep this tab open & connected (session stops ~12h).
 #  ==================================================
-import json, os, re, subprocess, time, urllib.request
+import json, os, subprocess, time, urllib.request
 
 VERCEL_URL     = "https://nextgen-web-eta.vercel.app"  # <- your Vercel app
 ADMIN_USERNAME = "admin"                               # <- your admin username
 ADMIN_PASSWORD = "admin12345"                          # <- your admin password
-MODEL          = "qwen3:14b"   # nextgen-trained base; qwen3:8b = faster
-TUNNEL_HOST    = "localhost"
+BASE_MODEL     = "qwen3:14b"   # model to pull; qwen3:8b = faster
+WORKER_MODEL   = "nextgen-trained"  # the trained model name served to the site
+OLLAMA_URL     = "http://localhost:11434"
 OLLAMA_BIN     = "/usr/local/bin/ollama"
-WORKDIR        = "/kaggle/working"
 BROWSER_UA     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
 def sh(cmd, silent=True, timeout=1800):
@@ -24,38 +29,44 @@ def sh(cmd, silent=True, timeout=1800):
     except Exception as e:
         print("cmd failed:", e); return False
 
-def http(url, data=None, timeout=30):
+def http(url, data=None, timeout=30, token=None):
     h = {"User-Agent": BROWSER_UA}
     if data is not None:
         h["Content-Type"] = "application/json"
+    if token:
+        h["Authorization"] = "Bearer " + token
     req = urllib.request.Request(url, data=(json.dumps(data).encode() if data is not None else None), headers=h)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         body = r.read()
         return json.loads(body) if body else {}
 
-def post(path, data, token=None):
-    req = urllib.request.Request(
-        VERCEL_URL + path, data=json.dumps(data).encode(),
-        headers={"Content-Type": "application/json", "User-Agent": BROWSER_UA})
-    if token: req.add_header("Authorization", "Bearer " + token)
-    with urllib.request.urlopen(req, timeout=30) as r: return json.loads(r.read())
+print("NEXTGEN AI GPU worker starting...")
 
-os.makedirs(WORKDIR, exist_ok=True)
-print("NEXTGEN AI Kaggle GPU runner starting...")
-
-# 0) Hard GPU check
+# 0) Hard GPU check - do not waste time on CPU
 print("Checking GPU...")
-try:
-    gpu = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True)
-    print(gpu.stdout.strip() or "no GPU")
-except Exception as e:
-    print("nvidia-smi failed:", e)
+def have_gpu():
+    if any(os.path.exists(p) for p in ("/dev/nvidia0", "/dev/nvidia1")):
+        return True
+    try:
+        return subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True).returncode == 0
+    except Exception:
+        return False
 
-# 1) Install Ollama
-print("[1/5] Installing Ollama...")
+if not have_gpu():
+    print("NO NVIDIA GPU DETECTED.")
+    print("Menu: Runtime -> Change runtime type -> Hardware accelerator: T4 GPU -> Save")
+    print("Then press the play button again.")
+    raise SystemExit(1)
+print("GPU OK.")
+
+# ensure /usr/local/bin on PATH for subprocess
+os.environ["PATH"] = "/usr/local/bin:" + os.environ.get("PATH", "")
+
+# 1) Install Ollama (free, from ollama.com)
+print("[1/4] Installing Ollama...")
 if not os.path.exists(OLLAMA_BIN):
     print("Installing zstd (needed to unpack ollama)...")
-    sh("apt-get update -qq && apt-get install -y -qq zstd openssh-client", silent=False, timeout=600)
+    sh("apt-get update -qq && apt-get install -y -qq zstd", silent=False, timeout=600)
     if not (os.path.exists("/usr/bin/zstd") or os.path.exists("/bin/zstd")):
         print("WARNING: zstd binary not found, unpacking may fail")
     print("Downloading ollama (about 1.4 GB, a couple minutes)...")
@@ -65,27 +76,19 @@ if not os.path.exists(OLLAMA_BIN):
     sh("tar -xf /tmp/ollama.tar -C /usr/local", silent=False, timeout=600)
     sh("chmod +x " + OLLAMA_BIN)
 if not os.path.exists(OLLAMA_BIN):
-    print("FATAL: ollama binary missing at", OLLAMA_BIN); raise SystemExit(1)
+    print("FATAL: ollama binary missing at", OLLAMA_BIN)
+    sh("ls -la /usr/local/bin 2>/dev/null | grep -i ollama; ls -la /tmp | grep ollama", silent=False)
+    raise SystemExit(1)
 sh(OLLAMA_BIN + " --version", silent=False)
 print("Ollama installed.")
 
-# 2) Install cloudflared (primary tunnel)
-print("[2/5] Installing tunnel...")
-CF_BIN = "/usr/local/bin/cloudflared"
-if not os.path.exists(CF_BIN):
-    sh("wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O " + CF_BIN, silent=False)
-    sh("chmod +x " + CF_BIN)
-if not os.path.exists(CF_BIN):
-    print("FATAL: cloudflared missing at", CF_BIN); raise SystemExit(1)
-print("cloudflared installed.")
-
-# 3) Start Ollama server first (pull/create need the daemon running)
-print("[3/5] Starting Ollama server...")
+# 2) Start Ollama server first (pull/create need the daemon running)
+print("[2/4] Starting Ollama server...")
 subprocess.Popen([OLLAMA_BIN, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 server_ok = False
 for _ in range(30):
     try:
-        http("http://localhost:11434/api/version", timeout=3)
+        http(OLLAMA_URL + "/api/version", timeout=3)
         server_ok = True
         break
     except Exception:
@@ -94,8 +97,9 @@ if not server_ok:
     print("FATAL: ollama server did not start."); raise SystemExit(1)
 print("Ollama serving on :11434")
 
-print("Pulling %s (about 9 GB, takes a few minutes)..." % MODEL)
-if not sh(OLLAMA_BIN + " pull " + MODEL, silent=False):
+# 3) Pull the base model and create nextgen-trained
+print("Pulling %s (about 9 GB, takes a few minutes)..." % BASE_MODEL)
+if not sh(OLLAMA_BIN + " pull " + BASE_MODEL, silent=False):
     print("FATAL: model pull failed."); raise SystemExit(1)
 modelfile = '''FROM %s
 
@@ -104,114 +108,59 @@ SYSTEM "You are NEXTGEN AI v20, a fully autonomous AI software engineering opera
 PARAMETER temperature 0.7
 PARAMETER top_p 0.9
 PARAMETER num_ctx 8192
-''' % MODEL
-with open(WORKDIR + "/Modelfile", "w") as f: f.write(modelfile)
-if not sh(OLLAMA_BIN + " create nextgen-trained -f " + WORKDIR + "/Modelfile", silent=False):
-    print("FATAL: could not create nextgen-trained."); raise SystemExit(1)
-print("nextgen-trained created.")
+''' % BASE_MODEL
+with open("/content/Modelfile", "w") as f: f.write(modelfile)
+if not sh(OLLAMA_BIN + " create " + WORKER_MODEL + " -f /content/Modelfile", silent=False):
+    print("FATAL: could not create " + WORKER_MODEL); raise SystemExit(1)
+print(WORKER_MODEL + " created.")
 
-# 4) Start tunnel: cloudflared -> localhost.run -> serveo -> ngrok
-print("[4/5] Starting tunnel...")
-TUNNEL_LOG = WORKDIR + "/tunnel.log"
+# 4) Worker loop: poll the site for jobs, generate replies, submit results
+def login():
+    r = http(VERCEL_URL + "/api/auth/login", {"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD}, timeout=30)
+    return r["access_token"]
 
-def start_cloudflared():
-    subprocess.Popen([CF_BIN, "tunnel", "--url", "http://%s:11434" % TUNNEL_HOST, "--no-autoupdate"],
-                     stdout=open(TUNNEL_LOG, "w"), stderr=subprocess.STDOUT)
-    for _ in range(60):
-        try:
-            log = open(TUNNEL_LOG).read()
-            m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", log)
-            if m: return m.group(0)
-        except Exception:
-            pass
-        time.sleep(3)
-    return None
+def poll_jobs(token):
+    r = http(VERCEL_URL + "/api/worker/poll?limit=3", token=token, timeout=30)
+    return r.get("jobs", [])
 
-def start_ssh_tunnel(host_arg):
-    cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-           "-o", "ServerAliveInterval=60", "-o", "ServerAliveCountMax=3",
-           "-o", "ExitOnForwardFailure=yes", "-N", "-R", "80:localhost:11434", host_arg]
-    subprocess.Popen(cmd, stdout=open(TUNNEL_LOG, "w"), stderr=subprocess.STDOUT)
-    for _ in range(45):
-        try:
-            log = open(TUNNEL_LOG).read()
-            m = re.search(r"https://[a-z0-9-]+\.(lhr\.life|serveo\.net)", log)
-            if m: return m.group(0)
-        except Exception:
-            pass
-        time.sleep(3)
-    return None
+def complete(token, job_id, response=None, error=None):
+    payload = {"job_id": job_id}
+    if error:
+        payload["error"] = error
+    else:
+        payload["response"] = response or ""
+    http(VERCEL_URL + "/api/worker/complete", payload, token=token, timeout=30)
 
-def start_tunnel():
-    print("Trying cloudflared...")
-    url = start_cloudflared()
-    if url: return url
-    print("cloudflared failed; trying localhost.run...")
-    url = start_ssh_tunnel("nokey@localhost.run")
-    if url: return url
-    print("localhost.run failed; trying serveo.net...")
-    subprocess.run(["pkill", "-f", "localhost.run"], capture_output=True)
-    time.sleep(2)
-    url = start_ssh_tunnel("serveo.net")
-    if url: return url
-    print("all free tunnels failed; trying ngrok (set NGROK_AUTHTOKEN)...")
-    return None
+def ollama_chat(messages, model):
+    data = {"model": model, "messages": messages, "stream": False,
+            "options": {"num_ctx": 8192, "temperature": 0.7}}
+    r = http(OLLAMA_URL + "/api/chat", data, timeout=900)
+    return (r.get("message") or {}).get("content", "")
 
-url = start_tunnel()
-print("[5/5] Tunnel URL:", url)
-if not url:
-    print("FATAL: no tunnel URL appeared. All tunnel providers failed.")
-    raise SystemExit(1)
+print("[4/4] Worker online. Polling for jobs every 3 seconds...")
+print("KEEP THIS TAB OPEN. It stops after ~12h; just press Play again.")
 
-def tunnel_works(u):
-    try:
-        r = http(u + "/api/chat",
-                 {"model": MODEL, "messages": [{"role": "user", "content": "ping"}],
-                  "stream": False, "options": {"num_predict": 2}},
-                 timeout=180)
-        return bool(r.get("message"))
-    except Exception as e:
-        print("tunnel check failed:", e)
-        return False
-
-print("Validating tunnel -> Ollama...")
-ok = False
-for i in range(5):
-    if tunnel_works(url):
-        ok = True
-        break
-    print("retry %d/5..." % (i + 1))
-    time.sleep(10)
-if not ok:
-    print("ERROR: tunnel is up but Ollama is not reachable through it.")
-    raise SystemExit(1)
-
-# 5) Tell Vercel the new tunnel URL (auto-updates, no dashboard needed)
-def register(u):
-    try:
-        tok = post("/api/auth/login", {"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD})["access_token"]
-        post("/api/admin/ollama_url", {"url": u}, token=tok)
-        print("Registered tunnel with Vercel. App live:", VERCEL_URL)
-    except Exception as e:
-        print("Could not auto-register:", e, "(set OLLAMA_URL manually in Vercel)")
-
-register(url)
-
-print("\nKEEP THIS SESSION OPEN. ~9h limit; rerun to restart.")
-print("Monitoring tunnel...")
-
-# 6) Keep alive: restart tunnel if it dies, re-register URL
+token = None
 while True:
-    time.sleep(60)
     try:
-        http(url + "/api/version", timeout=10)
-    except Exception:
-        print("Tunnel died, restarting...")
-        subprocess.run(["pkill", "-f", "cloudflared"], capture_output=True)
-        subprocess.run(["pkill", "-f", "ssh"], capture_output=True)
-        time.sleep(3)
-        new_url = start_tunnel()
-        if new_url and new_url != url:
-            url = new_url
-            register(url)
-            print("New tunnel:", url)
+        if token is None:
+            token = login()
+        jobs = poll_jobs(token)
+        for jb in jobs:
+            jid = jb["job_id"]
+            print("Job", jid[:8], "started...")
+            try:
+                text = ollama_chat(jb["messages"], jb.get("model") or WORKER_MODEL)
+                complete(token, jid, response=text)
+                print("Job", jid[:8], "done (%d chars)" % len(text))
+            except Exception as e:
+                print("Job", jid[:8], "failed:", e)
+                try:
+                    complete(token, jid, error=str(e)[:500])
+                except Exception:
+                    pass
+    except Exception as e:
+        print("poll error:", e)
+        token = None  # force re-login next round
+        time.sleep(5)
+    time.sleep(3)

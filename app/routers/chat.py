@@ -1,5 +1,6 @@
-"""Chat endpoints: create/list conversations, stream responses via SSE."""
+"""Chat endpoints: create/list conversations, stream responses via SSE, queue jobs."""
 import json
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -8,8 +9,8 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user
 from ..config import get_settings
 from ..database import get_db, get_ollama_url
-from ..models import Conversation, Message, User
-from ..schemas import ChatRequest, ConversationOut, MessageOut
+from ..models import ChatJob, Conversation, Message, User
+from ..schemas import ChatJobOut, ChatJobRequest, ChatRequest, ConversationOut, MessageOut
 from ..services.ollama import OllamaClient
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -125,4 +126,69 @@ async def stream_chat(body: ChatRequest, user: User = Depends(get_current_user),
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@router.post("/job", response_model=ChatJobOut)
+def create_chat_job(
+    body: ChatJobRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Queue a message for a remote GPU worker (no tunnel required)."""
+    settings = get_settings()
+    model = body.model or settings.default_model
+
+    conv_id = body.conversation_id
+    if conv_id:
+        conv = db.query(Conversation).filter(
+            Conversation.id == conv_id, Conversation.user_id == user.id
+        ).first()
+        if not conv:
+            raise HTTPException(404, "Conversation not found")
+    else:
+        conv = Conversation(user_id=user.id, title=body.message.strip()[:60] or "New chat", model=model)
+        db.add(conv)
+        db.commit()
+        db.refresh(conv)
+        conv_id = conv.id
+
+    history = [
+        {"role": m.role, "content": m.content}
+        for m in conv.messages
+    ]
+    db.add(Message(conversation_id=conv.id, role="user", content=body.message))
+    job = ChatJob(
+        id=str(uuid.uuid4()),
+        user_id=user.id,
+        conversation_id=conv.id,
+        prompt=body.message,
+        history=json.dumps(history),
+        model=model,
+        status="pending",
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return ChatJobOut(job_id=job.id, conversation_id=conv.id, status=job.status)
+
+
+@router.get("/job/{job_id}", response_model=ChatJobOut)
+def get_chat_job(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Poll a queued job's status from the frontend."""
+    job = db.query(ChatJob).filter(
+        ChatJob.id == job_id, ChatJob.user_id == user.id
+    ).first()
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return ChatJobOut(
+        job_id=job.id,
+        conversation_id=job.conversation_id,
+        status=job.status,
+        response=job.response,
+        error=job.error,
     )

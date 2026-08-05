@@ -1,4 +1,4 @@
-"""SQLAlchemy models: users, conversations, messages, api settings."""
+"""SQLAlchemy models: users, conversations, messages, api settings, chat jobs."""
 import datetime
 from sqlalchemy import (
     Column, Integer, String, Text, Boolean, DateTime, ForeignKey,
@@ -65,3 +65,27 @@ class ApiSetting(Base):
     updated_at = Column(
         DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
     )
+
+
+class ChatJob(Base):
+    """A queued chat request that a remote GPU worker picks up and completes.
+
+    The deployed site cannot reach a GPU behind NAT, so the GPU machine
+    *polls* for pending jobs instead of exposing a public tunnel.
+    """
+    __tablename__ = "chat_jobs"
+
+    id = Column(String(64), primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"), index=True, nullable=True)
+    prompt = Column(Text, nullable=False)
+    history = Column(Text, default="[]")  # JSON list of {role, content} before this prompt
+    model = Column(String(255), default=None)
+    status = Column(String(20), default="pending")  # pending | running | done | error
+    response = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(
+        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+    )
+    completed_at = Column(DateTime, nullable=True)

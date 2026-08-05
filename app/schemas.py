@@ -54,6 +54,26 @@ class ChatRequest(BaseModel):
     system_prompt: Optional[str] = None
 
 
+class ChatJobRequest(BaseModel):
+    message: str = Field(min_length=1)
+    conversation_id: Optional[int] = None
+    model: Optional[str] = None
+
+
+class ChatJobOut(BaseModel):
+    job_id: str
+    conversation_id: Optional[int] = None
+    status: str
+    response: Optional[str] = None
+    error: Optional[str] = None
+
+
+class WorkerCompleteIn(BaseModel):
+    job_id: str
+    response: Optional[str] = None
+    error: Optional[str] = None
+
+
 class MessageOut(BaseModel):
     id: int
     role: str
