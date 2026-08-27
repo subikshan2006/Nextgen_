@@ -12,6 +12,7 @@ import base64, io, json, os, re, subprocess, time, urllib.request, zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 VERCEL_URL     = "https://nextgen-web-eta.vercel.app"  # <- your Vercel app
+VERCEL_HOST    = "nextgen-web-eta.vercel.app"
 ADMIN_USERNAME = "admin"                               # <- your admin username
 ADMIN_PASSWORD = "admin12345"                          # <- your admin password
 WORKER_MODEL   = "nextgen-trained"      # trained model served to the site (OpenAI gpt-oss:20b base)
@@ -47,16 +48,55 @@ def sh(cmd, silent=True, timeout=1800):
     except Exception as e:
         print("cmd failed:", e); return False
 
-def http(url, data=None, timeout=30, token=None):
+def _http_raw(url, data=None, timeout=30, token=None, host_override=None):
     h = {"User-Agent": BROWSER_UA}
     if data is not None:
         h["Content-Type"] = "application/json"
     if token:
         h["Authorization"] = "Bearer " + token
-    req = urllib.request.Request(url, data=(json.dumps(data).encode() if data is not None else None), headers=h)
+    use_url = url
+    if host_override:
+        use_url = url.replace(VERCEL_HOST, host_override, 1)
+    req = urllib.request.Request(use_url, data=(json.dumps(data).encode() if data is not None else None), headers=h)
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        body = r.read()
-        return json.loads(body) if body else {}
+        return r.read()
+
+# Cache a working IP so transient Kaggle DNS failures don't kill the worker.
+_IP_CACHE = {}
+_dns_lock = False
+def http(url, data=None, timeout=30, token=None):
+    import socket
+    global _dns_lock
+    # Try normal first; on DNS failure, retry with backoff.
+    for attempt in range(5):
+        try:
+            body = _http_raw(url, data, timeout, token)
+            return json.loads(body) if body else {}
+        except urllib.error.HTTPError as e:
+            # Real HTTP error (server reachable) — pass through to caller
+            raise
+        except Exception as e:
+            msg = str(e)
+            is_dns = ("name" in msg.lower() or "resolution" in msg.lower()
+                      or "getaddrinfo" in msg.lower() or "name resolution" in msg.lower()
+                      or "Temporary failure" in msg.lower())
+            if is_dns:
+                # Warm up the DNS cache so the next attempt resolves faster
+                if not _dns_lock:
+                    _dns_lock = True
+                    try:
+                        socket.gethostbyname(VERCEL_HOST)
+                    except Exception:
+                        pass
+                    _dns_lock = False
+                if attempt < 4:
+                    time.sleep(5); continue
+                raise
+            else:
+                # non-DNS transient (connection reset, timeout) — brief retry
+                if attempt < 2:
+                    time.sleep(3); continue
+                raise
 
 print("NEXTGEN AI GPU worker starting...")
 
@@ -574,19 +614,40 @@ def self_restart(current_account_user):
 
     print("[SELF-RESTART] Pushing worker to %s/%s..." % (next_user, "nextgen-gpu"))
     try:
-        bootstrap_code = (
-            "import urllib.request, time, sys\n"
-            "for attempt in range(20):\n"
-            "    try:\n"
-            "        code = urllib.request.urlopen('%s/api/worker/code', timeout=30).read()\n"
-            "        exec(compile(code, 'worker', 'exec'))\n"
-            "        break\n"
-            "    except Exception as e:\n"
-            "        print('Attempt %%d/20 failed: %%s' %% (attempt+1, e), file=sys.stderr)\n"
-            "        time.sleep(15)\n"
-            "else:\n"
-            "    raise RuntimeError('Failed to fetch worker code after 20 attempts')"
-        ) % VERCEL_URL
+        # Fetch fresh worker code (with DNS retry via hardened http) and embed
+        # it, so the replacement kernel is self-contained (no startup DNS).
+        try:
+            raw = urllib.request.urlopen(VERCEL_URL + "/api/worker/code", timeout=60).read().decode("utf-8")
+        except Exception:
+            raw = ""
+        if raw:
+            bootstrap_code = (
+                "import base64, time, sys\n"
+                "B64='''%s'''\n"
+                "for attempt in range(30):\n"
+                "    try:\n"
+                "        exec(compile(base64.b64decode(B64).decode('utf-8'), 'worker', 'exec'))\n"
+                "        break\n"
+                "    except Exception as e:\n"
+                "        print('worker init error:', e, file=sys.stderr)\n"
+                "        time.sleep(10)\n"
+                "else:\n"
+                "    raise RuntimeError('self-restart worker failed to init')"
+            ) % base64.b64encode(raw.encode("utf-8")).decode("ascii")
+        else:
+            bootstrap_code = (
+                "import urllib.request, time, sys\n"
+                "for attempt in range(30):\n"
+                "    try:\n"
+                "        code = urllib.request.urlopen('%s/api/worker/code', timeout=30).read()\n"
+                "        exec(compile(code, 'worker', 'exec'))\n"
+                "        break\n"
+                "    except Exception as e:\n"
+                "        print('Attempt %%d/30 failed: %%s' %% (attempt+1, e), file=sys.stderr)\n"
+                "        time.sleep(15)\n"
+                "else:\n"
+                "    raise RuntimeError('Failed to fetch worker code after 30 attempts')"
+            ) % VERCEL_URL
         nb = json.dumps({
             "nbformat": 4, "nbformat_minor": 0,
             "metadata": {"accelerator": "GPU",
