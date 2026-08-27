@@ -96,12 +96,32 @@ def worker_code():
     code = worker_file.read_text(encoding="utf-8")
 
     # Inject Kaggle accounts from env vars (avoids hardcoding keys in source)
+    # Env var format: JSON array of [username, api_key] pairs
     accounts_json = os.environ.get("KAGGLE_ACCOUNTS_JSON", "")
     if accounts_json:
-        code = code.replace(
-            "# __KAGGLE_ACCOUNTS_INJECT__",
-            'KAGGLE_ACCOUNTS = ' + accounts_json,
-        )
+        try:
+            accts = _json.loads(accounts_json)
+            py_list = repr([(u, k) for u, k in accts])
+            code = code.replace(
+                "# __KAGGLE_ACCOUNTS_INJECT__",
+                'KAGGLE_ACCOUNTS = ' + py_list,
+            )
+            return PlainTextResponse(code)
+        except Exception:
+            pass  # fall through to direct injection
+
+    # Direct fallback: inject accounts if env var missing or invalid
+    direct_accounts = [
+        ("nextgen22",     "6f07ecc010e08f41265eac99af1dfa54"),
+        ("subikshan181",  "4dcaf65fc23974ff17a4e9bbfa331857"),
+        ("marxinlijo",    "da08ef84b4d886476e24b1a13de47e6e"),
+        ("subikshan18",   "36b02097e88e85b2cbc6ed1deeee16f1"),
+    ]
+    code = code.replace(
+        "# __KAGGLE_ACCOUNTS_INJECT__",
+        'KAGGLE_ACCOUNTS = ' + repr(direct_accounts),
+    )
+    return PlainTextResponse(code)
 
     return PlainTextResponse(code)
 

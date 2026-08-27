@@ -541,13 +541,12 @@ def handle_job(token, jb):
 # itself to the NEXT account so a new GPU session takes over seamlessly.
 # __KAGGLE_ACCOUNTS_INJECT__
 # Fallback: hardcoded for local/dev use (overridden by env var on Vercel)
-if "KAGGLE_ACCOUNTS" not in dir():
+if "KAGGLE_ACCOUNTS" not in dir() or not KAGGLE_ACCOUNTS:
     KAGGLE_ACCOUNTS = [
-        ("nextgen22",     "REPLACE_WITH_KEY"),
-        ("subikshan181",  "REPLACE_WITH_KEY"),
-        ("marxinlijo",    "REPLACE_WITH_KEY"),
-        ("subikshan18",   "REPLACE_WITH_KEY"),
-        ("nextgen22",     "REPLACE_WITH_KEY"),  # wraps
+        ("nextgen22",     "REPLACE_ME"),
+        ("subikshan181",  "REPLACE_ME"),
+        ("marxinlijo",    "REPLACE_ME"),
+        ("subikshan18",   "REPLACE_ME"),
     ]
 SESSION_MAX_SECS = 11 * 60 * 60  # restart at 11h (1h before 12h hard kill)
 
