@@ -15,5 +15,15 @@
       "src": "/(.*)",
       "dest": "app/main.py"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/admin/kaggle_keepalive",
+      "schedule": "17 3 * * *"
+    },
+    {
+      "path": "/api/admin/kaggle_keepalive",
+      "schedule": "17 15 * * *"
+    }
   ]
 }

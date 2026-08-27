@@ -13,8 +13,9 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user
 from ..config import get_settings
 from ..database import get_db
-from ..models import ApiSetting, ChatJob, Conversation, Message, User
+from ..models import ApiSetting, ChatJob, Conversation, Message, SearchResult, User
 from ..schemas import WorkerCompleteIn
+from ..services.search import format_search_context
 
 router = APIRouter(prefix="/api/worker", tags=["worker"])
 
@@ -59,10 +60,26 @@ def poll_jobs(
         messages = [{"role": "system", "content": settings.default_system_prompt}]
         messages.extend(history)
         messages.append({"role": "user", "content": job.prompt})
+        # Attach web search results (if any) to the user message so the model
+        # answers from them and cites the sources.
+        srows = (
+            db.query(SearchResult)
+            .filter(SearchResult.job_id == job.id)
+            .order_by(SearchResult.rank.asc())
+            .all()
+        )
+        if srows:
+            ctx = format_search_context(job.prompt, [
+                {"title": r.title, "url": r.url, "snippet": r.snippet} for r in srows
+            ])
+            if ctx:
+                messages[-1] = dict(messages[-1])
+                messages[-1]["content"] += "\n\n" + ctx
         out.append({
             "job_id": job.id,
             "model": job.model or settings.default_model,
             "messages": messages,
+            "want_zip": bool(job.want_zip),
         })
     db.commit()
     return {"jobs": out}
@@ -108,6 +125,8 @@ def complete_job(
     else:
         job.status = "done"
         job.response = body.response or ""
+        job.zip_b64 = body.zip_b64
+        job.zip_name = body.zip_name
         if job.conversation_id:
             db.add(Message(
                 conversation_id=job.conversation_id, role="assistant",

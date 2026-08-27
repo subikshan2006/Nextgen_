@@ -1,0 +1,13 @@
+{
+  "id": "subikshan18/nextgen-diag3",
+  "title": "NEXTGEN connectivity recheck",
+  "code_file": "diag2.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": true,
+  "competition_sources": [],
+  "dataset_sources": [],
+  "kernel_sources": []
+}

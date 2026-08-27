@@ -67,6 +67,18 @@ class ApiSetting(Base):
     )
 
 
+class SearchResult(Base):
+    """Web search results attached to a chat job, rendered as a Sources list."""
+    __tablename__ = "search_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(String(64), ForeignKey("chat_jobs.id"), index=True, nullable=False)
+    rank = Column(Integer, default=0)
+    title = Column(Text, default="")
+    url = Column(Text, default="")
+    snippet = Column(Text, default="")
+
+
 class ChatJob(Base):
     """A queued chat request that a remote GPU worker picks up and completes.
 
@@ -84,6 +96,9 @@ class ChatJob(Base):
     status = Column(String(20), default="pending")  # pending | running | done | error
     response = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
+    want_zip = Column(Boolean, default=False)  # model asked to emit a project .zip
+    zip_b64 = Column(Text, nullable=True)      # project archive (base64)
+    zip_name = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(
         DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow

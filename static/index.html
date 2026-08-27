@@ -1,83 +1,144 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NEXTGEN AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
 <div class="layout">
-  <aside class="sidebar">
-    <div class="logo">NEXTGEN AI</div>
-    <button class="new-chat" id="new-chat">+ New chat</button>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="side-top">
+      <div class="logo"><span class="logo-mark">✦</span><span class="logo-text">NEXTGEN AI</span></div>
+      <button class="new-chat" id="new-chat">
+        <span class="nc-icon">✎</span><span>New chat</span>
+      </button>
+    </div>
+    <div class="conv-label">Conversations</div>
     <div class="conv-list" id="conv-list"></div>
     <div class="user-box">
-      <div class="u-name" id="user-name">…</div>
-      <div class="links">
-        <a href="/admin" id="admin-link" class="hidden">Admin</a>
-        <a href="#" id="logout">Log out</a>
+      <div class="u-row">
+        <div class="u-avatar" id="u-avatar">?</div>
+        <div class="u-meta">
+          <div class="u-name" id="user-name">…</div>
+          <div class="u-status" id="u-status">Online</div>
+        </div>
+      </div>
+      <div class="u-actions">
+        <button class="icon-btn" id="theme-toggle" title="Toggle theme">◐</button>
+        <a href="/admin" id="admin-link" class="icon-btn hidden" title="Admin">⚙</a>
+        <button class="icon-btn" id="logout" title="Log out">⎋</button>
       </div>
     </div>
   </aside>
 
   <main class="chat-main">
     <header class="chat-header">
-      <div style="font-size:13px;color:var(--text-dim)" id="chat-status">Ready</div>
-      <div class="right">
+      <button class="menu-btn" id="menu-btn" title="Menu">☰</button>
+      <div class="hd-status">
         <span class="online-dot" id="online-dot" title="Model status"></span>
+        <span class="status-text" id="chat-status">Ready</span>
+      </div>
+      <div class="right">
         <select class="model-pick" id="model-pick"></select>
       </div>
     </header>
 
     <div class="messages" id="messages">
       <div class="empty-state" id="empty-state">
-        <h2>NEXTGEN AI</h2>
-        <p>Your trained model. Ask me anything.</p>
+        <div class="empty-logo">✦</div>
+        <h2>How can I help you today?</h2>
+        <p class="empty-sub">NEXTGEN AI — chat, images, code and project builds</p>
+        <div class="chips" id="chips">
+          <button class="chip">✍️ Write a Python script that renames files in a folder</button>
+          <button class="chip">🖼️ Explain what is in a photo I upload</button>
+          <button class="chip">✂️ Edit an image (brighten, crop, add text, make it grayscale)</button>
+          <button class="chip">🚀 Build me a small web app (HTML/CSS/JS) as a project zip</button>
+          <button class="chip">🐍 Fix and explain this code</button>
+        </div>
+        <button class="caps-toggle" id="caps-toggle">▾ See what NEXTGEN AI can do</button>
+        <div class="caps-wrap" id="caps-wrap"></div>
       </div>
     </div>
 
     <div class="composer">
+      <div class="previews" id="previews"></div>
       <div class="composer-box">
+        <button class="attach-btn" id="attach" title="Add an image">＋</button>
         <textarea id="input" rows="1" placeholder="Message NEXTGEN AI…"></textarea>
-        <button class="send-btn" id="send" title="Send">➤</button>
+        <button class="search-btn on" id="search-btn" title="Web search: ON (click to turn off for this message)">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/></svg>
+        </button>
+        <button class="mic-btn" id="mic" title="Voice input">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+        </button>
+        <button class="send-btn" id="send" title="Send">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+        </button>
       </div>
-      <div class="composer-hint">Enter to send · Shift+Enter for a new line</div>
+      <div class="composer-row">
+        <label class="zip-toggle" title="Ask the worker to package the project into a downloadable .zip">
+          <input type="checkbox" id="zip-check"> <span>📦 Build project .zip</span>
+        </label>
+        <span class="composer-hint">NEXTGEN AI can make mistakes. Check important info.</span>
+      </div>
     </div>
   </main>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="/static/js/common.js"></script>
 <script>
 const user = getCurrentUser();
 if (!user) window.location.href = "/login";
 if (user.is_admin) document.getElementById("admin-link").classList.remove("hidden");
 document.getElementById("user-name").textContent = user.username + (user.is_admin ? " ★" : "");
+document.getElementById("u-avatar").textContent = (user.username[0] || "?").toUpperCase();
 
 let currentConvId = null;
 let streaming = false;
 let model = null;
+let pendingImages = [];   // base64 data URLs
+let lastJobId = null;
 
 const $input = document.getElementById("input");
 const $send = document.getElementById("send");
 const $messages = document.getElementById("messages");
 
-function addMsg(role, html) {
+// ---------- Theme ----------
+const root = document.documentElement;
+const savedTheme = localStorage.getItem("nextgen_theme") || "dark";
+root.dataset.theme = savedTheme;
+document.getElementById("theme-toggle").onclick = () => {
+  const next = root.dataset.theme === "dark" ? "light" : "dark";
+  root.dataset.theme = next;
+  localStorage.setItem("nextgen_theme", next);
+};
+
+// ---------- Messages ----------
+function addMsg(role, html, opts = {}) {
   document.getElementById("empty-state")?.remove();
   const div = document.createElement("div");
   div.className = "msg " + role;
-  const avatar = role === "user" ? "YOU" : "AI";
-  div.innerHTML = '<div class="avatar">' + avatar + '</div><div class="bubble"></div>';
+  div.innerHTML = '<div class="avatar">' + (role === "user" ? "YOU" : "✦") + "</div><div class=\"bubble\"></div>";
   div.querySelector(".bubble").innerHTML = html;
   $messages.appendChild(div);
+  highlightBlocks(div);
   scrollBottom();
   return div.querySelector(".bubble");
 }
 
 function addThinking() {
+  document.getElementById("empty-state")?.remove();
   const div = document.createElement("div");
   div.className = "msg assistant thinking";
-  div.innerHTML = '<div class="avatar">AI</div><div class="bubble"><span class="tool-indicator"><span class="spinner"></span> thinking…</span></div>';
+  div.innerHTML = '<div class="avatar">✦</div><div class="bubble"><span class="tool-indicator"><span class="spinner"></span> thinking…</span></div>';
   $messages.appendChild(div);
   scrollBottom();
   return div.querySelector(".bubble");
@@ -97,6 +158,14 @@ function autoGrow() {
   $input.style.height = Math.min($input.scrollHeight, 200) + "px";
 }
 
+function userTextHtml(text, images) {
+  let content = escapeHtml(text).replace(/\n/g, "\n");
+  for (const img of images) {
+    content += "\n\n![image](" + img + ")";
+  }
+  return md2html(content.replace(/\n/g, "\n\n"));
+}
+
 // ---------- Conversations ----------
 async function loadConversations() {
   const list = document.getElementById("conv-list");
@@ -106,7 +175,7 @@ async function loadConversations() {
   for (const c of convs) {
     const btn = document.createElement("button");
     btn.className = "conv-item" + (c.id === currentConvId ? " active" : "");
-    btn.innerHTML = '<span class="title"></span><button class="del" title="Delete">✕</button>';
+    btn.innerHTML = '<span class="title"></span><span class="del" title="Delete">✕</span>';
     btn.querySelector(".title").textContent = c.title;
     btn.onclick = () => openConversation(c.id);
     btn.querySelector(".del").onclick = (e) => { e.stopPropagation(); deleteConversation(c.id); };
@@ -115,12 +184,14 @@ async function loadConversations() {
 }
 
 async function openConversation(id) {
+  if (streaming) return;
   currentConvId = id;
   $messages.innerHTML = "";
   document.getElementById("empty-state")?.remove();
   const msgs = await api("/chat/conversations/" + id);
   for (const m of msgs) {
-    addMsg(m.role, m.role === "assistant" ? md2html(m.content) : escapeHtml(m.content));
+    const bubble = addMsg(m.role, m.role === "assistant" ? md2html(m.content) : userTextHtml(m.content, []));
+    if (m.role === "assistant") attachSpeak(bubble);
   }
   await loadConversations();
 }
@@ -128,16 +199,132 @@ async function openConversation(id) {
 async function deleteConversation(id) {
   if (!confirm("Delete this conversation?")) return;
   await api("/chat/conversations/" + id, { method: "DELETE" });
-  if (id === currentConvId) { currentConvId = null; $messages.innerHTML = ""; }
+  if (id === currentConvId) { currentConvId = null; $messages.innerHTML = ""; resetEmpty(); }
   await loadConversations();
+}
+
+function resetEmpty() {
+  $messages.innerHTML = '<div class="empty-state" id="empty-state">' +
+    '<div class="empty-logo">✦</div><h2>How can I help you today?</h2>' +
+    '<p class="empty-sub">NEXTGEN AI — chat, images, code and project builds</p>' +
+    '<div class="chips" id="chips"></div>' +
+    '<button class="caps-toggle" id="caps-toggle">▾ See what NEXTGEN AI can do</button>' +
+    '<div class="caps-wrap" id="caps-wrap"></div></div>';
+  buildChips();
+  buildCaps();
+}
+
+function buildCaps() {
+  const wrap = document.getElementById("caps-wrap");
+  const toggle = document.getElementById("caps-toggle");
+  if (!wrap || !toggle) return;
+  const caps = [
+    ["🧠", "Reasoning", "Any-domain answers, explanations, logic puzzles, planning", "Explain quantum computing simply"],
+    ["💻", "Code & Debugging", "23+ languages, algorithms, tests, code review, SQL", "Write a Python function to reverse a linked list and explain it"],
+    ["🌐", "Web Apps", "React, Next.js, Django, FastAPI, full-stack & APIs", "Build a full-stack todo app with a REST API"],
+    ["🤖", "AI & ML", "LLMs, agents, RAG, PyTorch, prompt engineering", "Explain how a RAG system works and give an example"],
+    ["☁️", "Cloud & DevOps", "AWS, Docker, Kubernetes, CI/CD, Terraform", "Write a Dockerfile and docker-compose for a FastAPI app"],
+    ["📊", "Data Science", "Pandas, statistics, charts, time-series, SQL analytics", "Show me how to clean a messy CSV with pandas"],
+    ["📱", "Mobile", "Android, iOS, Flutter, React Native", "Build a login screen with Flutter"],
+    ["🔒", "Security", "Secure coding, cryptography, web security, auditing", "List top web security mistakes and how to fix them"],
+    ["🎮", "Games", "Unity, Godot, Pygame, Three.js, game AI", "Write a simple Pygame game with movement and collision"],
+    ["✍️", "Writing", "Emails, reports, docs, resumes, proposals", "Write a professional email asking for a deadline extension"],
+    ["🎨", "Creative", "Stories, scripts, poems, lyrics, character design", "Write a short sci-fi story opening"],
+    ["📈", "Business", "Plans, SWOT, marketing, financial modeling", "Create a SWOT analysis for a food delivery startup"],
+    ["📚", "Education", "Homework, exam & interview prep, practice", "Give me 5 coding interview questions with hints"],
+    ["🖼️", "Image Understanding", "Describe, OCR text, charts, screenshots, UI review", "What is in this image? (upload one)"],
+    ["✂️", "Image Editing", "Resize, crop, rotate, brighten, blur, text overlays", "Make this image grayscale and add the text NEXTGEN (upload one)"],
+    ["🧮", "Mathematics", "Algebra to calculus, probability, statistics", "Solve this equation step by step: x^2 + 5x + 6 = 0"],
+    ["🌍", "100+ Languages", "Tamil, Hindi, English, and many more", "எப்படி இருக்கிறீர்கள்? நன்றி என்று எழுதுங்கள்"],
+  ];
+  wrap.innerHTML = "";
+  for (const [e, t, s, sample] of caps) {
+    const card = document.createElement("button");
+    card.className = "cap-card";
+    card.innerHTML = '<span class="cap-emoji">' + e + '</span><span class="cap-body">' +
+      '<span class="cap-title">' + t + '</span><span class="cap-sub">' + s + '</span></span>';
+    card.onclick = () => { $input.value = sample; autoGrow(); send(); };
+    wrap.appendChild(card);
+  }
+  toggle.onclick = () => {
+    const open = wrap.classList.toggle("open");
+    toggle.textContent = open ? "▴ Hide what NEXTGEN AI can do" : "▾ See what NEXTGEN AI can do";
+  };
+}
+
+function buildChips() {
+  const box = document.getElementById("chips");
+  if (!box) return;
+  const ideas = [
+    "✍️ Write a Python script that renames files in a folder",
+    "🖼️ Explain what is in a photo I upload",
+    "✂️ Edit this image: make it grayscale and add the text NEXTGEN",
+    "🚀 Build me a small web app (HTML/CSS/JS) as a project zip",
+    "🐍 Fix and explain this code",
+  ];
+  box.innerHTML = "";
+  for (const idea of ideas) {
+    const b = document.createElement("button");
+    b.className = "chip";
+    b.textContent = idea;
+    b.onclick = () => { $input.value = idea.replace(/^[^\s]+\s/, ""); autoGrow(); send(); };
+    box.appendChild(b);
+  }
 }
 
 document.getElementById("new-chat").onclick = () => {
   if (streaming) return;
   currentConvId = null;
-  $messages.innerHTML = '<div class="empty-state" id="empty-state"><h2>NEXTGEN AI</h2><p>Your trained model. Ask me anything.</p></div>';
+  lastJobId = null;
+  resetEmpty();
   $input.focus();
 };
+
+// ---------- Image attach ----------
+document.getElementById("attach").onclick = () => {
+  const fi = document.createElement("input");
+  fi.type = "file";
+  fi.accept = "image/*";
+  fi.multiple = true;
+  fi.onchange = () => { for (const f of fi.files) compressImage(f); };
+  fi.click();
+};
+
+function compressImage(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const max = 1280;
+      let { width, height } = img;
+      if (width > max || height > max) {
+        const r = Math.min(max / width, max / height);
+        width = Math.round(width * r);
+        height = Math.round(height * r);
+      }
+      const c = document.createElement("canvas");
+      c.width = width; c.height = height;
+      c.getContext("2d").drawImage(img, 0, 0, width, height);
+      const data = c.toDataURL("image/jpeg", 0.8);
+      pendingImages.push(data);
+      renderPreviews();
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function renderPreviews() {
+  const box = document.getElementById("previews");
+  box.innerHTML = "";
+  pendingImages.forEach((data, i) => {
+    const p = document.createElement("div");
+    p.className = "preview";
+    p.innerHTML = '<img src="' + data + '"><button class="pv-x" title="Remove">✕</button>';
+    p.querySelector(".pv-x").onclick = () => { pendingImages.splice(i, 1); renderPreviews(); };
+    box.appendChild(p);
+  });
+}
 
 // ---------- Models ----------
 async function loadModels() {
@@ -150,33 +337,36 @@ async function loadModels() {
       const opt = document.createElement("option");
       opt.value = m.name;
       const label = m.name.split(":")[0];
-      const yours = m.name.startsWith("nextgen-trained") ? " (yours)" : "";
-      const size = m.size_gb ? " · " + m.size_gb + "GB" : "";
-      const fast = (m.size_gb ?? 99) < 3 ? " · fast" : "";
-      opt.textContent = label + yours + size + fast;
+      const tag = m.name.includes("nextgen-trained") ? " (trained)" : (m.name.includes("vl") ? " (vision)" : "");
+      opt.textContent = label + tag;
       pick.appendChild(opt);
     }
-    if (data.reachable) { setStatus("Online", true); } else { setStatus("Model server offline", false); }
+    if (data.reachable) { setStatus("AI online", true); } else { setStatus("AI offline — starting…", false); }
   } catch { setStatus("Offline", false); }
 }
 
 // ---------- Queued chat (GPU worker polls Vercel; no tunnel needed) ----------
 async function send() {
   const text = $input.value.trim();
-  if (!text || streaming) return;
+  const images = pendingImages.slice();
+  if ((!text && !images.length) || streaming) return;
   $input.value = ""; autoGrow();
-  addMsg("user", escapeHtml(text).replace(/\n/g, "<br>"));
+  pendingImages = []; renderPreviews();
+
+  addMsg("user", userTextHtml(text, images));
   const thinking = addThinking();
   streaming = true;
   $send.disabled = true;
 
-  const body = { message: text };
+  const wantZip = document.getElementById("zip-check").checked;
+  const body = { message: text, images: images, want_zip: wantZip, search: searchOn };
   if (currentConvId) body.conversation_id = currentConvId;
   if (model) body.model = model;
 
   try {
     const job = await api("/chat/job", { method: "POST", body: JSON.stringify(body) });
     currentConvId = job.conversation_id;
+    lastJobId = job.job_id;
 
     let result = null;
     for (let i = 0; i < 800; i++) {           // up to ~20 min
@@ -192,9 +382,31 @@ async function send() {
     } else {
       thinking.closest(".msg").remove();
       const bubble = addMsg("assistant", "");
-      bubble.innerHTML = result.response && result.response.trim()
+      const txt = result.response && result.response.trim()
         ? md2html(result.response)
         : '<span class="text-dim">(no response)</span>';
+      const srcHtml = (result.sources && result.sources.length)
+        ? '<div class="sources-box"><div class="sources-head">Sources</div><div class="sources-list">' +
+          result.sources.map(s =>
+            '<a class="source-link" href="' + escapeAttr(s.url || "#") + '" target="_blank" rel="noopener">' +
+            escapeHtml(s.title || s.url) + "</a>" +
+            (s.snippet ? '<div class="source-snip">' + escapeHtml(s.snippet) + "</div>" : "")
+          ).join("") + "</div></div>"
+        : "";
+      if (result.has_zip) {
+        bubble.innerHTML = txt + srcHtml + '<div class="zip-card"><div class="zip-icon">📦</div>' +
+          '<div class="zip-info"><div class="zip-name">project.zip</div>' +
+          '<div class="zip-sub">Your project is ready</div></div>' +
+          '<button class="zip-dl" id="zip-dl">Download</button></div>';
+        bubble.querySelector("#zip-dl").onclick = () => {
+          downloadUrl("/chat/job/" + job.job_id + "/zip", "project.zip")
+            .catch(e => alert("Download failed: " + e.message));
+        };
+      } else {
+        bubble.innerHTML = txt + srcHtml;
+      }
+      highlightBlocks(bubble);
+      attachSpeak(bubble);
     }
   } catch (err) {
     thinking.innerHTML = '<span class="bad">Error: ' + escapeHtml(err.message) + "</span>";
@@ -212,6 +424,91 @@ $input.addEventListener("keydown", (e) => {
 $input.addEventListener("input", autoGrow);
 document.getElementById("model-pick").onchange = (e) => { model = e.target.value; };
 
+// ---------- Web search toggle (ON by default — searches every message) ----------
+const $searchBtn = document.getElementById("search-btn");
+let searchOn = true;
+$searchBtn.onclick = () => {
+  searchOn = !searchOn;
+  $searchBtn.classList.toggle("on", searchOn);
+  $searchBtn.title = searchOn
+    ? "Web search: ON (click to turn off for this message)"
+    : "Web search: OFF (click to turn on)";
+};
+
+// ---------- Voice input (speech-to-text) ----------
+const $mic = document.getElementById("mic");
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let listening = false;
+let finalTranscript = "";
+
+function stopMicUI() {
+  listening = false;
+  $mic.classList.remove("listening");
+  if (!$input.value.trim()) $input.placeholder = "Message NEXTGEN AI…";
+}
+
+if (!SR) {
+  $mic.style.display = "none";
+} else {
+  const rec = new SR();
+  rec.lang = "en-US";
+  rec.interimResults = false;
+  rec.maxAlternatives = 1;
+  rec.onresult = (e) => {
+    finalTranscript = "";
+    for (let i = 0; i < e.results.length; i++) finalTranscript += e.results[i][0].transcript;
+  };
+  rec.onerror = (e) => {
+    stopMicUI();
+    if (e.error === "not-allowed") setStatus("Microphone blocked", false);
+  };
+  rec.onend = () => {
+    stopMicUI();
+    const t = finalTranscript.trim();
+    if (t) { $input.value = t; autoGrow(); send(); }
+  };
+  $mic.onclick = () => {
+    if (listening) { rec.stop(); return; }
+    finalTranscript = "";
+    try { rec.start(); } catch (e) { return; }
+    listening = true;
+    $mic.classList.add("listening");
+    $input.placeholder = "Listening…";
+  };
+}
+
+// ---------- Voice output (text-to-speech, read aloud) ----------
+function speechText(el) {
+  const clone = el.cloneNode(true);
+  clone.querySelectorAll(".codeblock, .chat-imgbox, .zip-card").forEach(n => n.remove());
+  return (clone.innerText || clone.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function attachSpeak(bubble) {
+  if (!("speechSynthesis" in window)) return;
+  const msg = bubble.closest(".msg");
+  const btn = document.createElement("button");
+  btn.className = "speak-btn";
+  btn.title = "Read aloud";
+  btn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a6.5 6.5 0 0 1 0 13.4v2.1a8.5 8.5 0 0 0 0-17.6z"/></svg>';
+  btn.onclick = () => {
+    if (speechSynthesis.speaking || speechSynthesis.pending) {
+      speechSynthesis.cancel();
+      btn.classList.remove("on");
+      return;
+    }
+    const txt = speechText(bubble);
+    if (!txt) return;
+    const u = new SpeechSynthesisUtterance(txt);
+    u.rate = 1.02;
+    u.onend = () => btn.classList.remove("on");
+    u.onerror = () => btn.classList.remove("on");
+    speechSynthesis.speak(u);
+    btn.classList.add("on");
+  };
+  msg.appendChild(btn);
+}
+
 document.getElementById("logout").onclick = (e) => {
   e.preventDefault();
   clearToken();
@@ -219,6 +516,12 @@ document.getElementById("logout").onclick = (e) => {
   window.location.href = "/login";
 };
 
+document.getElementById("menu-btn").onclick = () => {
+  document.getElementById("sidebar").classList.toggle("open");
+};
+
+buildChips();
+buildCaps();
 loadModels();
 loadConversations();
 $input.focus();

@@ -1,4 +1,6 @@
 """Chat endpoints: create/list conversations, stream responses via SSE, queue jobs."""
+import base64
+import io
 import json
 import uuid
 
@@ -9,9 +11,10 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user
 from ..config import get_settings
 from ..database import get_db, get_ollama_url
-from ..models import ChatJob, Conversation, Message, User
-from ..schemas import ChatJobOut, ChatJobRequest, ChatRequest, ConversationOut, MessageOut
+from ..models import ChatJob, Conversation, Message, SearchResult, User
+from ..schemas import ChatJobOut, ChatJobRequest, ChatRequest, ConversationOut, MessageOut, SearchSourceOut
 from ..services.ollama import OllamaClient
+from ..services.search import search_web
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -157,17 +160,46 @@ def create_chat_job(
         {"role": m.role, "content": m.content}
         for m in conv.messages
     ]
-    db.add(Message(conversation_id=conv.id, role="user", content=body.message))
+
+    # Embed any attached images into the user message as markdown data URLs.
+    # The worker extracts them and sends them to a vision model.
+    content = body.message
+    for img in (body.images or []):
+        content += "\n\n![image](" + img + ")"
+    db.add(Message(conversation_id=conv.id, role="user", content=content))
     job = ChatJob(
         id=str(uuid.uuid4()),
         user_id=user.id,
         conversation_id=conv.id,
-        prompt=body.message,
+        prompt=content,
         history=json.dumps(history),
         model=model,
+        want_zip=body.want_zip,
         status="pending",
     )
     db.add(job)
+    db.flush()
+
+    # Web search runs for every message by default (ChatGPT-style browsing);
+    # the UI can opt out per-message with search:false. Results are stored so
+    # the worker injects them as context and the frontend renders a clickable
+    # Sources list next to the reply.
+    do_search = True
+    if body.search is False:
+        do_search = False
+    if do_search:
+        try:
+            sources = search_web(content, max_results=6, timeout=12)
+        except Exception:
+            sources = []
+        for i, s in enumerate(sources):
+            db.add(SearchResult(
+                job_id=job.id, rank=i,
+                title=(s.get("title") or "")[:1000],
+                url=(s.get("url") or "")[:2000],
+                snippet=(s.get("snippet") or "")[:1000],
+            ))
+
     db.commit()
     db.refresh(job)
     return ChatJobOut(job_id=job.id, conversation_id=conv.id, status=job.status)
@@ -185,10 +217,45 @@ def get_chat_job(
     ).first()
     if not job:
         raise HTTPException(404, "Job not found")
+    sources = [
+        SearchSourceOut(title=r.title, url=r.url, snippet=r.snippet)
+        for r in db.query(SearchResult)
+        .filter(SearchResult.job_id == job.id)
+        .order_by(SearchResult.rank.asc())
+        .all()
+    ]
     return ChatJobOut(
         job_id=job.id,
         conversation_id=job.conversation_id,
         status=job.status,
         response=job.response,
         error=job.error,
+        has_zip=bool(job.zip_b64),
+        sources=sources,
+    )
+
+
+@router.get("/job/{job_id}/zip")
+def download_job_zip(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Download the project archive produced for a finished job (owner only)."""
+    job = db.query(ChatJob).filter(
+        ChatJob.id == job_id, ChatJob.user_id == user.id
+    ).first()
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if not job.zip_b64:
+        raise HTTPException(404, "No project archive for this job")
+    try:
+        data = base64.b64decode(job.zip_b64)
+    except Exception:
+        raise HTTPException(400, "Stored archive is corrupt")
+    name = (job.zip_name or "project.zip").replace('"', "").replace("\n", "")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
     )

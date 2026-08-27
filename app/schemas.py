@@ -58,6 +58,15 @@ class ChatJobRequest(BaseModel):
     message: str = Field(min_length=1)
     conversation_id: Optional[int] = None
     model: Optional[str] = None
+    images: Optional[List[str]] = None  # base64 data URLs, client-compressed
+    want_zip: bool = False              # ask the worker to build a project .zip
+    search: Optional[bool] = None       # True=force web search, False=off, None=auto
+
+
+class SearchSourceOut(BaseModel):
+    title: str = ""
+    url: str = ""
+    snippet: str = ""
 
 
 class ChatJobOut(BaseModel):
@@ -66,12 +75,16 @@ class ChatJobOut(BaseModel):
     status: str
     response: Optional[str] = None
     error: Optional[str] = None
+    has_zip: bool = False
+    sources: List[SearchSourceOut] = []
 
 
 class WorkerCompleteIn(BaseModel):
     job_id: str
     response: Optional[str] = None
     error: Optional[str] = None
+    zip_b64: Optional[str] = None
+    zip_name: Optional[str] = None
 
 
 class MessageOut(BaseModel):

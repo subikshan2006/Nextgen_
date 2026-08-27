@@ -1,16 +1,19 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NEXTGEN AI — Sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
 <div class="auth-wrap">
   <div class="auth-card">
-    <h1>NEXTGEN AI</h1>
-    <p class="sub">Your own AI — trained locally, runs for you.</p>
+    <h1><span class="logo-mark">✦</span> NEXTGEN AI</h1>
+    <p class="sub">Your own AI — chat, images, code and projects.</p>
     <div class="error-box" id="error"></div>
 
     <div id="login-view">
@@ -51,6 +54,8 @@
 
 <script src="/static/js/common.js"></script>
 <script>
+const savedTheme = localStorage.getItem("nextgen_theme") || "dark";
+document.documentElement.dataset.theme = savedTheme;
 function showError(msg) {
   const el = document.getElementById("error");
   el.textContent = msg;

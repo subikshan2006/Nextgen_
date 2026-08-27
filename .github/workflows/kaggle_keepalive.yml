@@ -1,0 +1,17 @@
+name: Kaggle keepalive
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Kaggle keepalive endpoint
+        run: |
+          curl -sS -X POST \
+            -H "x-keepalive-key: ${{ secrets.KAGGLE_KEEPALIVE_KEY }}" \
+            -H "Content-Type: application/json" \
+            https://nextgen-web-eta.vercel.app/api/admin/kaggle_keepalive

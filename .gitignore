@@ -15,6 +15,7 @@ env/
 .env
 .env.local
 *.pem
+kaggle_accounts.json
 
 # OS
 Thumbs.db
