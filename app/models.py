@@ -79,6 +79,46 @@ class SearchResult(Base):
     snippet = Column(Text, default="")
 
 
+class Memory(Base):
+    """Long-term memory the AI keeps about each user across conversations."""
+    __tablename__ = "memories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    content = Column(Text, nullable=False)
+    kind = Column(String(50), default="fact")  # fact | preference | lesson | skill | goal
+    source = Column(String(50), default="auto")  # auto (extracted) | manual (user said "remember")
+    importance = Column(Integer, default=1)  # 1-5, higher = always injected
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    user = relationship("User")
+
+
+class Feedback(Base):
+    """User ratings on AI responses — drives the self-improvement loop."""
+    __tablename__ = "feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(String(64), ForeignKey("chat_jobs.id"), index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=True)
+    rating = Column(Integer, default=0)  # 1 = good, -1 = bad
+    comment = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class SelfImprovement(Base):
+    """Lessons the AI learned from feedback — injected into future prompts."""
+    __tablename__ = "self_improvements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String(50), default="lesson")  # lesson | prompt_patch | capability
+    content = Column(Text, nullable=False)
+    times_reinforced = Column(Integer, default=1)
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class ChatJob(Base):
     """A queued chat request that a remote GPU worker picks up and completes.
 

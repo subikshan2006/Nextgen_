@@ -22,6 +22,9 @@
     </div>
     <div class="conv-label">Conversations</div>
     <div class="conv-list" id="conv-list"></div>
+    <button class="memory-btn" id="memory-btn" title="AI Memory & self-improvement">
+      <span class="mc-icon">🧠</span><span>Memory (AI)</span>
+    </button>
     <div class="user-box">
       <div class="u-row">
         <div class="u-avatar" id="u-avatar">?</div>
@@ -90,6 +93,43 @@
       </div>
     </div>
   </main>
+</div>
+
+<!-- AI Memory & self-improvement panel -->
+<div class="mem-overlay" id="mem-overlay" hidden>
+  <div class="mem-panel">
+    <div class="mem-head">
+      <span class="mem-title">🧠 AI Memory — I remember you</span>
+      <button class="icon-btn" id="mem-close" title="Close">✕</button>
+    </div>
+    <div class="mem-alive" id="mem-alive"></div>
+    <div class="mem-tabs">
+      <button class="mem-tab active" data-tab="mem">Memories</button>
+      <button class="mem-tab" data-tab="add">Remember for me</button>
+      <button class="mem-tab" data-tab="about">Why I'm alive</button>
+    </div>
+    <div class="mem-body">
+      <div class="mem-tabpane active" id="pane-mem">
+        <div class="mem-list" id="mem-list"></div>
+      </div>
+      <div class="mem-tabpane" id="pane-add">
+        <p class="mem-hint">Tell me something to remember permanently. I'll recall it in every future conversation.</p>
+        <textarea id="mem-new" rows="3" placeholder="Example: I prefer short answers in Tamil. or My name is …"></textarea>
+        <div class="mem-add-row">
+          <select id="mem-kind">
+            <option value="fact">Fact about me</option>
+            <option value="preference">My preference</option>
+            <option value="goal">My goal</option>
+            <option value="skill">My skill</option>
+          </select>
+          <button class="btn primary" id="mem-save">Remember it</button>
+        </div>
+      </div>
+      <div class="mem-tabpane" id="pane-about">
+        <div class="about-list" id="about-list"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>

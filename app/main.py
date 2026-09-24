@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 
 from .config import get_settings
 from .database import init_db
-from .routers import admin, auth, chat, worker
+from .routers import admin, auth, chat, memory, worker
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -46,6 +46,7 @@ app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
 app.include_router(worker.router)
+app.include_router(memory.router)
 
 
 @app.get("/api/health")

@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user
 from ..config import get_settings
 from ..database import get_db
-from ..models import ApiSetting, ChatJob, Conversation, Message, SearchResult, User
-from ..schemas import WorkerCompleteIn
+from ..models import ApiSetting, ChatJob, Conversation, Memory, Message, SearchResult, SelfImprovement, User
+from ..schemas import MemoryIn, WorkerCompleteIn
 from ..services.search import format_search_context
 
 router = APIRouter(prefix="/api/worker", tags=["worker"])
@@ -24,6 +24,58 @@ def _require_admin(user: User):
     if not user.is_admin:
         raise HTTPException(403, "Admin only")
     return user
+
+
+def build_lifelong_context(db: Session, user_id: int) -> str:
+    """Assemble the AI's lifelong context: per-user memories + self-learned
+    lessons that were reinforced by feedback. This is injected alongside the
+    base system prompt so the AI 'remembers' the user and improves over time."""
+    blocks = []
+
+    lessons = (
+        db.query(SelfImprovement)
+        .filter(SelfImprovement.active == True)  # noqa: E712
+        .order_by(SelfImprovement.times_reinforced.desc())
+        .limit(12)
+        .all()
+    )
+    if lessons:
+        lines = []
+        for s in lessons:
+            if s.kind == "lesson" and s.content:
+                lines.append("- " + s.content[:600])
+        if lines:
+            blocks.append(
+                "## LESSONS LEARNED (from user feedback across all chats)\n"
+                + "\n".join(lines)
+                + "\nFollow these in every reply. They exist to make your "
+                "answers better."
+            )
+
+    memories = (
+        db.query(Memory)
+        .filter(Memory.user_id == user_id)
+        .order_by(Memory.importance.desc(), Memory.created_at.desc())
+        .limit(40)
+        .all()
+    )
+    if memories:
+        lines = []
+        for m in memories:
+            if m.content and len(m.content) > 2:
+                lines.append("- [%s] %s" % (m.kind, m.content[:400]))
+        if lines:
+            blocks.append(
+                "## LONG-TERM MEMORY ABOUT THIS USER (remember these, they "
+                "were learned from past chats)\n" + "\n".join(lines)
+            )
+
+    if blocks:
+        return (
+            "\n\n======= LIFELONG MEMORY & SELF-IMPROVEMENT CONTEXT =======\n"
+            + "\n\n".join(blocks)
+        )
+    return ""
 
 
 @router.get("/poll")
@@ -57,7 +109,8 @@ def poll_jobs(
             history = json.loads(job.history or "[]")
         except Exception:
             history = []
-        messages = [{"role": "system", "content": settings.default_system_prompt}]
+        lesson_context = build_lifelong_context(db, job.user_id)
+        messages = [{"role": "system", "content": settings.default_system_prompt + lesson_context}]
         messages.extend(history)
         messages.append({"role": "user", "content": job.prompt})
         # Attach web search results (if any) to the user message so the model
@@ -100,6 +153,44 @@ def heartbeat(
         db.add(ApiSetting(key="worker_last_seen", value=ts))
     db.commit()
     return {"ok": True}
+
+
+@router.post("/memory")
+def save_memory(
+    body: MemoryIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The worker (AI) can autonomously save a memory it learned about the
+    user. Deduplicates near-identical memories."""
+    _require_admin(user)
+    from sqlalchemy import func
+
+    probe = (body.content or "").strip().lower()
+    dup = None
+    for m in db.query(Memory).filter(Memory.user_id == user.id).all():
+        if m.content and m.content.strip().lower() == probe:
+            dup = m
+            break
+        # duplicate if similar starts (e.g. "loves JavaScript" vs "loves JS")
+        a, b = probe[:60], (m.content or "").lower()[:60]
+        if a and b and (a in b or b in a):
+            dup = m
+            break
+    if dup:
+        dup.importance = max(dup.importance, min(5, body.importance))
+        db.commit()
+        return {"ok": True, "dedup": True}
+    m = Memory(
+        user_id=user.id,
+        content=(body.content or "").strip()[:4000],
+        kind=body.kind,
+        source="auto",
+        importance=max(1, min(5, body.importance)),
+    )
+    db.add(m)
+    db.commit()
+    return {"ok": True, "dedup": False}
 
 
 @router.post("/complete")

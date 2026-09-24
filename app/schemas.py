@@ -118,3 +118,49 @@ class SystemStatus(BaseModel):
     models: List[ModelInfo] = []
     total_users: int = 0
     total_conversations: int = 0
+
+
+class MemoryIn(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+    kind: str = "fact"  # fact | preference | lesson | skill | goal
+    importance: int = 3  # 1-5
+
+
+class MemoryOut(BaseModel):
+    id: int
+    content: str
+    kind: str
+    source: str
+    importance: int
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class FeedbackIn(BaseModel):
+    rating: int  # 1 = good, -1 = bad
+    comment: Optional[str] = None
+
+
+class FeedbackOut(BaseModel):
+    id: int
+    job_id: str
+    rating: int
+    comment: Optional[str]
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class SelfImprovementOut(BaseModel):
+    id: int
+    kind: str
+    content: str
+    times_reinforced: int
+    active: bool
+    created_at: str
+
+    class Config:
+        from_attributes = True

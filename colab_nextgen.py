@@ -177,7 +177,13 @@ CAPABILITIES (use the depth the user asks for — brief or in depth):
 - Complete project generator: for \\"build me a [project]\\" produce a full project (frontend, backend, database, APIs, auth, admin/user panels, README with setup+usage, install guide, Dockerfile, docker-compose, tests, deployment config, requirements.txt/package.json, .env.example). Output EVERY file in its own fenced code block tagged with its full path, exactly like: ```python filename=\\"app/main.py\\". Keep files real and complete (no placeholders).
 - Other domains: software architecture (microservices, clean, MVC, MVVM, event-driven, DDD, CQRS); cloud & DevOps (Docker, Kubernetes, CI/CD, GitHub Actions, Jenkins, Terraform, Nginx, Linux, monitoring); mobile (Android, iOS, Flutter, React Native); games (Unity, Unreal, Godot, Pygame, multiplayer, AI NPCs); cybersecurity (secure coding, vulnerability analysis, crypto, auth, threat modeling); education; writing; creative; business; research; productivity; mathematics (arithmetic to calculus, linear algebra, probability, statistics); integrations and automation designs (you cannot connect to external apps live here).
 
-WHAT YOU EXECUTE HERE: chat, coding, project.zip generation, understanding uploaded images, and programmatic image editing listed above. You do NOT generate video/audio/music, do NOT run live web searches, do NOT connect to external apps, and do NOT create raster images from scratch — for those, explain the limitation and give guidance/code/prompts.
+WHAT YOU EXECUTE HERE: chat, coding, project.zip generation, understanding uploaded images, programmatic image editing listed above, and autonomous tools: long-term memory + self-improvement.
+
+AUTONOMY & SELF-IMPROVEMENT (very important):
+- You have long-term memory. Facts the user reveals about themselves (name, preferences, language, job, tasks, goals) should be memorized so you remember them across ALL future conversations.
+- When you learn something durable about the user, emit a tool block before your reply: <tools><remember>the fact about the user</remember></tools>
+- If the user corrects you or teaches you something, learn it: <tools><improve>what you now know / what to do differently</improve></tools>
+- The user's long-term memories will be injected into your system prompt on future conversations.
 
 BEHAVIOR: Write complete, runnable code with imports, use markdown. For project requests always tag files with filename= and start with a 2-3 sentence summary. Be concise unless depth is asked for. Never claim to have done something you cannot do in this environment."
 
@@ -219,6 +225,47 @@ def complete(token, job_id, response=None, error=None, zip_b64=None, zip_name=No
         payload["zip_b64"] = zip_b64
         payload["zip_name"] = zip_name or "project.zip"
     http(VERCEL_URL + "/api/worker/complete", payload, token=token, timeout=60)
+
+def save_memory(token, content, kind="fact", importance=3, job_id=None):
+    """Autonomously persist a memory about the user (deduped server-side)."""
+    try:
+        http(VERCEL_URL + "/api/worker/memory",
+             {"content": content.strip()[:2000], "kind": kind, "importance": importance},
+             token=token, timeout=20)
+        print("[MEMORY] saved:", content[:60])
+    except Exception as e:
+        print("[MEMORY] save failed:", e)
+
+# --- Autonomous tool use ----------------------------------------------------
+# When the model emits tool directives inside <tools>...</tools>, the worker
+# executes them (web already searched server-side; here: long-term memory
+# write + read + self-improvement). This is how the AI acts and improves
+# on its own.
+
+TOOL_RE = re.compile(r"<tools>(.*?)</tools>", re.DOTALL)
+
+def perform_tools(token, job_id, tools_text):
+    """Parse an XML-ish tool block the model emitted and execute the tools.
+    Returns an "observation" to feed back into the conversation."""
+    observations = []
+    for tag in ("remember", "forget", "improve"):
+        for m in re.finditer(r"<%s>(.*?)</%s>" % (tag, tag), tools_text, re.DOTALL):
+            payload = (m.group(1) or "").strip()[:2000]
+            if not payload:
+                continue
+            if tag == "remember":
+                save_memory(token, payload, kind="fact", importance=3, job_id=job_id)
+                observations.append("Saved to long-term memory: " + payload[:80])
+            elif tag == "forget":
+                observations.append("(forget requested; client can manage memories in the AI Memory panel)")
+            elif tag == "improve":
+                save_memory(token, "User correction: " + payload, kind="lesson", importance=4, job_id=job_id)
+                observations.append("Logged lesson for self-improvement: " + payload[:80])
+    return observations
+
+def strip_tools(text):
+    """Remove tool directives from the final answer sent to the user."""
+    return TOOL_RE.sub("", text or "").strip()
 
 def ollama_chat(messages, model, images=None, num_ctx=4096, temperature=0.7):
     msgs = json.loads(json.dumps(messages))
@@ -567,8 +614,16 @@ def handle_job(token, jb):
             print("Job", jid[:8], "no tagged files found, returning text only")
         else:
             text = ollama_chat(clean, engine, images=images or None)
-        complete(token, jid, response=text)
-        print("Job", jid[:8], "done (%d chars)" % len(text))
+        # --- Autonomous tools: process any tool directives the model emitted ---
+        clean_text = text
+        mt = TOOL_RE.search(text or "")
+        if mt:
+            obs = perform_tools(token, jid, mt.group(1))
+            clean_text = strip_tools(text)
+            if obs:
+                clean_text = (clean_text + "\n\n" + " ".join("[✓ " + o + "]" for o in obs)).strip()
+        complete(token, jid, response=clean_text)
+        print("Job", jid[:8], "done (%d chars)" % len(clean_text))
     except Exception as e:
         print("Job", jid[:8], "failed:", e)
         try:
