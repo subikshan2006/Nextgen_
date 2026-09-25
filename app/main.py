@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 
 from .config import get_settings
 from .database import init_db
-from .routers import admin, auth, chat, memory, worker
+from .routers import admin, admin_command, auth, chat, memory, worker
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -45,6 +45,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
+app.include_router(admin_command.router)
 app.include_router(worker.router)
 app.include_router(memory.router)
 

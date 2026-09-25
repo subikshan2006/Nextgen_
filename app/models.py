@@ -119,6 +119,20 @@ class SelfImprovement(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class WorkerCommand(Base):
+    """Durable commands the admin queues for the AI worker to execute
+    autonomously (self-update, remember, emotion, tool grants). Polled by
+    the GPU worker exactly like chat jobs — the AI acts on them itself."""
+    __tablename__ = "worker_commands"
+
+    id = Column(String(64), primary_key=True, index=True)
+    kind = Column(String(50), nullable=False, index=True)  # self_update | remember | improve | emotion | grant | restart | run_tool
+    payload = Column(Text, nullable=True)
+    status = Column(String(20), default="pending")  # pending | running | done | error
+    result = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class ChatJob(Base):
     """A queued chat request that a remote GPU worker picks up and completes.
 

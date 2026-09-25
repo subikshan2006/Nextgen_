@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NEXTGEN AI — Admin Command Center</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background:#0b0f16; color:#dfe6f0; margin:0; }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 22px 18px 80px; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 0; border-bottom:1px solid #1e2a3a; flex-wrap:wrap; }
+  header h1 { font-size:20px; margin:0; color:#7ee0ff; letter-spacing:.5px; }
+  .state { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .state .tag { background:#14202e; border:1px solid #1f3145; padding:5px 11px; border-radius:20px; font-size:12.5px; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+  .dot.on { background:#37e0a0; box-shadow:0 0 10px #37e0a0; }
+  .dot.off { background:#f0475f; }
+  .emotion { font-size:13px; color:#ffd479; }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:18px; margin-top:20px; }
+  @media (max-width:800px){ .grid{grid-template-columns:1fr;} }
+  .card { background:#101827; border:1px solid #1e2d40; border-radius:12px; padding:16px; }
+  .card h2 { font-size:14px; margin:0 0 12px; color:#9fd8ff; text-transform:uppercase; letter-spacing:1px; }
+  label { display:block; margin:10px 0 4px; font-size:12.5px; color:#9fb3c8; }
+  input[type=text], select, textarea { width:100%; box-sizing:border-box; padding:8px 10px; border-radius:8px; border:1px solid #2a3b52; background:#0c1420; color:#e8f1fb; font-size:13.5px; }
+  textarea { min-height:64px; resize:vertical; }
+  .row { display:flex; gap:8px; margin-top:10px; }
+  button { background:#155ecb; color:#fff; border:none; border-radius:8px; padding:9px 14px; font-size:13.5px; cursor:pointer; transition:background .15s; }
+  button:hover { background:#1e70ea; }
+  button.ghost { background:transparent; border:1px solid #2a3b52; color:#c6d6e8; }
+  button.danger { background:#b2334c; }
+  button.danger:hover { background:#d04060; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .tools { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .tool { display:flex; align-items:center; gap:7px; background:#0c1420; border:1px solid #223349; border-radius:20px; padding:6px 12px; font-size:13px; }
+  .tool input { width:auto; margin:0; }
+  #log { background:#070b11; border:1px solid #1c2a3c; border-radius:10px; padding:12px; margin-top:16px; height:300px; overflow-y:auto; font-family:Consolas, monospace; font-size:12.5px; white-space:pre-wrap; line-height:1.55; }
+  #log .t { color:#5b7od { }
+  .sys { color:#6b82a0; } .cmd { color:#8fd8ff; } .ok { color:#37e0a0; } .err { color:#ff7a8a; }
+  .hint { font-size:12px; color:#7d92aa; margin-top:8px; }
+  .moodpress { display:flex; gap:6px; flex-wrap:wrap; }
+  .flow { display:flex; gap:10px; align-items:center; margin-top:14px; font-size:13px; color:#9fb3c8; }
+  .flow .step { display:flex; align-items:center; gap:8px; }
+  .flow .arrow { color:#3c4f66; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>⚡ NEXTGEN AI — Admin Command Center</h1>
+    <div class="state">
+      <span class="tag"><span class="dot" id="dot"></span><span id="worker_state">checking…</span></span>
+      <span class="tag emotion" id="emotion">mind: &#128522; curious</span>
+      <span class="tag"><span id="lesson_count">0</span> lessons</span>
+      <span class="tag"><span id="mem_count">0</span> memories</span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>🧠 Give the AI a direct command</h2>
+        <label>Command type</label>
+        <select id="cmdkind">
+          <option value="chat">💬 Chat job (tell it something)</option>
+          <option value="remember">🔒 Remember something (long-term memory)</option>
+          <option value="improve">📈 Improve itself (feedback lesson)</option>
+          <option value="self_update">🔄 SELF-UPDATE (retrain on a free GPU)</option>
+          <option value="emotion">💗 Set its emotion / mood</option>
+          <option value="grant">🔓 Grant/revoke a tool to it</option>
+          <option value="restart">♻️ Restart the GPU worker</option>
+          <option value="run_tool">🛠️ Run a tool right now</option>
+        </select>
+        <label>Payload / message</label>
+        <textarea id="payload" placeholder='e.g. "You now have full access to build any project you think the user needs. Start by updating your own model."'></textarea>
+        <div class="row">
+          <button onclick="issue()">⚠️ Issue command → worker executes it</button>
+        </div>
+        <div class="hint">Commands are queued durably (DB) and the GPU worker picks them up on its next poll — so the AI literally <i>acts</i> on what you type here.</div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
+        <h2>💗 Emotion / mind state</h2>
+        <div class="moodpress">
+          <button class="ghost" onclick="setEmotion('curious')">🤔 curious</button>
+          <button class="ghost" onclick="setEmotion('happy')">😊 happy</button>
+          <button class="ghost" onclick="setEmotion('focused')">🎯 focused</button>
+          <button class="ghost" onclick="setEmotion('playful')">😜 playful</button>
+          <button class="ghost" onclick="setEmotion('inspired')">✨ inspired</button>
+          <button class="ghost" onclick="setEmotion('loving')">💗 loving</button>
+          <button class="ghost" onclick="setEmotion('dreaming')">🌙 dreaming</button>
+        </div>
+        <div class="flow">
+          <div class="step"><span>admin tap</span><span class="arrow">→</span></div>
+          <div class="step"><span>mood stored</span><span class="arrow">→</span></div>
+          <div class="step"><span>worker reads it</span><span class="arrow">→</span></div>
+          <div class="step"><span>AI responds with that feeling</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>🔓 Tool access — grant the AI anything</h2>
+        <div class="tools" id="tools"></div>
+        <div class="hint">Each toggle is instantly granted to the worker &amp; reflected in the <b>emotion + tool grants</b> the GPU worker receives. Full access = it can run web search, edit images, read, build &amp; zip whole projects, write files, run code — by itself.</div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
+        <h2>🛠️ Run a tool immediately (in the host)</h2>
+        <label>Tool</label>
+        <select id="toolkind">
+          <option value="web_search">🌐 Web search (always-on)</option>
+          <option value="memory">🧠 Query its memory</option>
+          <option value="self_update">🔄 Force self-update/retrain push</option>
+          <option value="zip_project">📦 Build a project .zip now</option>
+          <option value="feedback">📊 Get feedback summary</option>
+        </select>
+        <label>Arguments (JSON)</label>
+        <textarea id="toolargs" placeholder='{"query": "what does the user want most"}'></textarea>
+        <div class="row">
+          <button onclick="runTool()">Run now in host</button>
+          <button class="ghost" onclick="refreshStatus()">↻ Refresh</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="log">NEXTGEN ADMIN CONSOLE — connected…<span class="blink"></span></div>
+</div>
+
+<script src="/static/js/common.js"></script>
+<script>
+  const API = "";
+  let MAX = 400;
+  function log(msg, cls){
+    const el = document.getElementById("log");
+    const line = document.createElement("div");
+    const t = new Date().toLocaleTimeString();
+    line.innerHTML = `<span class="t">[${t}]</span> <span class="${cls||''}"></span> ${escapeHtml(msg)}`;
+    el.appendChild(line); el.scrollTop = el.scrollHeight;
+    while(el.children.length > MAX) el.removeChild(el.firstChild);
+  }
+  const esc = s => String(s||"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  function escapeHtml(s){ return esc(s); }
+
+  async function api(path, method="GET", body){
+    const r = await fetch(API + path, {
+      method, headers: body?{"Content-Type":"application/json"}:undefined,
+      body: body?JSON.stringify(body):undefined,
+      credentials: "include"
+    });
+    if(!r.ok){ const t = await r.text().catch(()=>""); throw new Error("HTTP "+r.status+" "+t.slice(0,200)); }
+    return r.json();
+  }
+
+  async function refreshStatus(){
+    try{
+      const s = await api("/api/alive");
+      const dot = document.getElementById("dot"), st = document.getElementById("worker_state");
+      const ok = s.alive && (s.worker_online!==false);
+      dot.className = "dot "+(ok?"on":"off");
+      st.textContent = ok ? "AI ALIVE — worker online" : "AI awake — worker offline";
+      document.getElementById("worker_state").textContent = st.textContent;
+      document.getElementById("lesson_count").textContent = s.lessons ?? 0;
+      document.getElementById("mem_count").textContent = s.memories ?? 0;
+      if(s.mood) document.getElementById("emotion").innerHTML = "mind: " + esc(s.mood);
+      log("status: alive="+s.alive+" lessons="+(s.lessons??0)+" memory="+(s.memories??0)+(s.wake ? " wake="+esc(s.wake) : ""), "sys");
+    }catch(e){ log("status check failed: "+e.message, "err"); }
+  }
+
+  async function issue(){
+    const kind = document.getElementById("cmdkind").value;
+    const payload = document.getElementById("payload").value;
+    log("issuing command: "+kind, "cmd");
+    try{
+      if(kind==="chat"){
+        const j = await api("/api/chat/job", "POST", {message: payload, search:false});
+        log("chat job queued: "+j.id, "ok");
+        pollChatJob(j.id);
+      } else if(kind==="emotion"){
+        const r = await api("/api/admin/commands", "POST", {kind:"emotion", payload: JSON.stringify({mood: payload||"curious"})});
+        log("emotion command queued -> "+JSON.stringify(r), "ok");
+      } else if(kind==="grant"){
+        const r = await api("/api/admin/commands", "POST", {kind:"grant", payload: JSON.stringify({tool: payload||"web_search", enabled:true})});
+        log("grant command queued -> "+JSON.stringify(r), "ok");
+      } else {
+        const r = await api("/api/admin/commands", "POST", {kind, payload});
+        log("command queued #"+r.id+" ["+r.kind+"] -> "+JSON.stringify(r), "ok");
+      }
+    }catch(e){ log("issue failed: "+e.message, "err"); }
+  }
+
+  async function pollChatJob(id){
+    for(let i=0;i<40;i++){
+      await new Promise(r=>setTimeout(r,15000));
+      try{
+        const j = await api("/api/chat/job/"+id);
+        if(j.status==="done"){ log("job DONE: "+esc(j.response).slice(0,280), "ok"); return; }
+        if(j.status==="error"){ log("job ERROR: "+esc(j.error), "err"); return; }
+        log("job "+j.status+"… (poll "+i+")", "sys");
+      }catch(e){ log("poll error: "+e.message, "err"); }
+    }
+  }
+
+  function setEmotion(mood){
+    log("setting emotion: "+mood, "cmd");
+    api("/api/admin/commands","POST",{kind:"emotion", payload:JSON.stringify({mood})})
+      .then(r=>{ log("emotion -> "+JSON.stringify(r), "ok"); refreshStatus(); })
+      .catch(e=>log("emotion failed: "+e.message,"err"));
+  }
+
+  async function renderTools(){
+    const box = document.getElementById("tools");
+    const toggles = ["web_search","image_edit","read_files","write_files","run_code","build_zip","memory","emotion"];
+    box.innerHTML="";
+    for(const t of toggles){
+      const wrap=document.createElement("label"); wrap.className="tool";
+      const cb=document.createElement("input"); cb.type="checkbox"; cb.checked=true; cb.dataset.tool=t;
+      cb.onchange = async ()=>{ log("tool grant "+t+" -> "+cb.checked, "cmd");
+        try{ const r=await api("/api/admin/commands","POST",{kind:"grant",payload:JSON.stringify({tool:t,enabled:cb.checked})}); log("grant "+t+" = "+cb.checked+" ok", "ok"); }
+        catch(e){ log("grant failed: "+e.message,"err"); } };
+      const span=document.createElement("span"); span.textContent=t.replace(/_/g," ");
+      wrap.appendChild(cb); wrap.appendChild(span); box.appendChild(wrap);
+    }
+  }
+
+  async function runTool(){
+    const kind=document.getElementById("toolkind").value, args=document.getElementById("toolargs").value;
+    log("running tool: "+kind, "cmd");
+    try{
+      const req = {kind, payload:args};
+      const r = await api("/api/admin/commands","POST",req);
+      log("tool run queued: #"+r.id+" "+r.kind, "ok");
+      if(kind==="self_update"){
+        log("→ self-update trainer push TRIGGERED. Retraining begins when a GPU slot frees.", "ok");
+      }
+    }catch(e){ log("run tool failed: "+e.message,"err"); }
+  }
+
+  refreshStatus();
+  renderTools();
+  setInterval(refreshStatus, 30000);
+</script>
+</body>
+</html>

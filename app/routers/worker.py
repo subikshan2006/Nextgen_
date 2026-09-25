@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user
 from ..config import get_settings
 from ..database import get_db
-from ..models import ApiSetting, ChatJob, Conversation, Memory, Message, SearchResult, SelfImprovement, User
-from ..schemas import MemoryIn, WorkerCompleteIn
+from ..models import ApiSetting, ChatJob, Conversation, Memory, Message, SearchResult, SelfImprovement, User, WorkerCommand
+from ..schemas import MemoryIn, WorkerCommandCompleteIn, WorkerCompleteIn
 from ..services.search import format_search_context
 
 router = APIRouter(prefix="/api/worker", tags=["worker"])
@@ -131,11 +131,28 @@ def poll_jobs(
         out.append({
             "job_id": job.id,
             "model": job.model or settings.default_model,
-            "messages": messages,
-            "want_zip": bool(job.want_zip),
+        "messages": messages,
+        "want_zip": bool(job.want_zip),
+    })
+    db.commit()
+
+    commands = []
+    for c in (
+        db.query(WorkerCommand)
+        .filter(WorkerCommand.status == "pending")
+        .order_by(WorkerCommand.created_at.asc())
+        .limit(5)
+        .all()
+    ):
+        c.status = "running"
+        db.add(c)
+        commands.append({
+            "command_id": c.id,
+            "kind": c.kind,
+            "payload": c.payload,
         })
     db.commit()
-    return {"jobs": out}
+    return {"jobs": out, "commands": commands}
 
 
 @router.post("/heartbeat")
@@ -193,6 +210,52 @@ def save_memory(
     return {"ok": True, "dedup": False}
 
 
+@router.get("/commands")
+def poll_commands(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The GPU worker polls pending admin commands (just like jobs) and
+    executes them. Returns at most 3 at a time; each is idempotent by id."""
+    _require_admin(user)
+    cmds = (
+        db.query(WorkerCommand)
+        .filter(WorkerCommand.status == "pending")
+        .order_by(WorkerCommand.created_at.asc())
+        .limit(3)
+        .all()
+    )
+    now = datetime.datetime.utcnow()
+    out = []
+    for c in cmds:
+        c.status = "running"
+        out.append({
+            "id": c.id,
+            "kind": c.kind,
+            "payload": c.payload,
+        })
+    db.commit()
+    return {"commands": out}
+
+
+@router.post("/commands/complete")
+def complete_command(
+    body: WorkerCommandCompleteIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The worker reports back what it did for an admin command."""
+    _require_admin(user)
+    c = db.query(WorkerCommand).filter(WorkerCommand.id == body.command_id).first()
+    if not c:
+        raise HTTPException(404, "Command not found")
+    c.status = body.status
+    c.result = (body.result or "")[:2000]
+    c.completed_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"ok": True}
+
+
 @router.post("/complete")
 def complete_job(
     body: WorkerCompleteIn,
@@ -230,5 +293,26 @@ def complete_job(
                 conv.updated_at = now
     job.completed_at = now
     job.updated_at = now
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/command_complete")
+def command_complete(
+    body: WorkerCommandCompleteIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The GPU worker reports back the result of an admin command it executed."""
+    import uuid as _uuid
+
+    _require_admin(user)
+    c = db.query(WorkerCommand).filter(WorkerCommand.id == body.command_id).first()
+    if not c:
+        raise HTTPException(404, "Command not found")
+    c.status = body.status
+    c.result = (body.result or "")[:2000]
+    c.completed_at = datetime.datetime.utcnow()
+    # Side-effect on the actual AI state:
     db.commit()
     return {"ok": True}

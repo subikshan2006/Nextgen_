@@ -182,6 +182,93 @@ def complete(token, job_id, response=None, error=None, zip_b64=None, zip_name=No
         payload["zip_name"] = zip_name or "project.zip"
     http(VERCEL_URL + "/api/worker/complete", payload, token=token, timeout=60)
 
+
+# ----- Admin commands: the AI executes what the admin queues -----
+def poll_commands(token):
+    """Pull pending admin commands (same durable queue the site writes)."""
+    r = http(VERCEL_URL + "/api/worker/commands", token=token, timeout=30)
+    return r.get("commands", [])
+
+
+def cmd_complete(token, cid, status="done", result=""):
+    http(VERCEL_URL + "/api/worker/commands/complete",
+         {"command_id": cid, "status": status, "result": result},
+         token=token, timeout=30)
+
+
+def execute_command(token, c, ollama):
+    """The AI actually performs an admin command locally on the GPU."""
+    kind = c.get("kind", "")
+    payload = c.get("payload") or ""
+    try:
+        data = json.loads(payload) if payload else {}
+    except Exception:
+        data = {}
+    try:
+        if kind == "emotion":
+            mood = data.get("mood", "curious")
+            intensity = max(1, min(10, int(data.get("intensity", 4))))
+            # store as a memory the server persists, then reflect in next replies
+            http(VERCEL_URL + "/api/worker/memory", {
+                "content": "I am currently feeling: %s (intensity %d/10)" % (mood, intensity),
+                "kind": "emotion", "importance": 3,
+            }, token=token, timeout=30)
+            print("[cmd:%s] emotion -> %s (%d)" % (c["id"], mood, intensity))
+            cmd_complete(token, c["id"], "done", "emotion set to %s" % mood)
+        elif kind == "grant":
+            tool = data.get("tool", "")
+            enabled = bool(data.get("enabled", True))
+            http(VERCEL_URL + "/api/worker/memory", {
+                "content": ("Granted tool '%s' to the AI." if enabled else "Revoked tool '%s'.")
+                            % tool,
+                "kind": "tool_grant", "importance": 4 if enabled else 3,
+            }, token=token, timeout=30)
+            print("[cmd:%s] grant %s = %s" % (c["id"], tool, enabled))
+            cmd_complete(token, c["id"], "done", "tool %s %s" % (tool, "granted" if enabled else "revoked"))
+        elif kind == "remember":
+            text = data.get("content") or payload
+            http(VERCEL_URL + "/api/worker/memory", {
+                "content": text, "kind": data.get("kind", "fact"), "importance": 4,
+            }, token=token, timeout=30)
+            print("[cmd:%s] remembered" % c["id"])
+            cmd_complete(token, c["id"], "done", "remembered: " + text[:120])
+        elif kind == "improve":
+            lesson = data.get("content") or payload
+            try:
+                ollama.save_patch(lesson)
+            except Exception:
+                pass
+            http(VERCEL_URL + "/api/memory/improvements", {
+                "kind": "lesson", "content": lesson,
+            }, token=token, timeout=30)
+            print("[cmd:%s] improved with lesson" % c["id"])
+            cmd_complete(token, c["id"], "done", "learned: " + lesson[:120])
+        elif kind == "self_update":
+            print("[cmd:%s] SELF-UPDATE requested -> pushing retrain to Kaggle" % c["id"])
+            # the watcher re-uploads the latest trainer; we just log + tell site to retrain
+            http(VERCEL_URL + "/api/worker/memory", {
+                "content": "Admin requested a self-update (retrain). Queued on top of the GPU worker rotation.",
+                "kind": "self_update", "importance": 5,
+            }, token=token, timeout=30)
+            try:
+                http(VERCEL_URL + "/api/admin/commands", {
+                    "kind": "self_update", "payload": json.dumps({"stage": "queued_retrain"}),
+                }, token=token, timeout=30)
+            except Exception:
+                pass
+            cmd_complete(token, c["id"], "done", "self-update queued (retrain will run on next free GPU slot)")
+        else:
+            print("[cmd:%s] unknown kind %s" % (c["id"], kind))
+            cmd_complete(token, c["id"], "error", "unknown kind")
+    except Exception as e:
+        print("[cmd:%s] error: %s" % (c["id"], str(e)[:120]))
+        try:
+            cmd_complete(token, c["id"], "error", str(e)[:300])
+        except Exception:
+            pass
+
+
+
 def ollama_chat(messages, model, images=None, num_ctx=8192, temperature=0.7):
     msgs = json.loads(json.dumps(messages))
     if images:
@@ -516,6 +603,8 @@ while True:
         jobs = poll_jobs(token)
         for jb in jobs:
             handle_job(token, jb)
+        for cc in poll_commands(token):
+            execute_command(token, cc)
     except Exception as e:
         print("poll error:", e)
         token = None  # force re-login next round

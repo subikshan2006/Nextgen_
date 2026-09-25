@@ -164,3 +164,32 @@ class SelfImprovementOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class WorkerCommandIn(BaseModel):
+    kind: str          # self_update | remember | improve | emotion | grant | restart | run_tool
+    payload: str = "{}"
+
+
+class WorkerCommandCompleteIn(BaseModel):
+    command_id: str
+    status: str = "done"   # done | error
+    result: str = ""
+
+
+class WorkerCommandOut(BaseModel):
+    id: str
+    kind: str
+    payload: str | None = None
+    status: str = "pending"
+    result: str | None = None
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class EmotionOut(BaseModel):
+    mood: str = "curious"
+    intensity: int = 3
+    last_change: str | None = None
