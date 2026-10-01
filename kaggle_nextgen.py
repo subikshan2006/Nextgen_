@@ -122,11 +122,21 @@ CAPABILITIES (use the depth the user asks for — brief or in depth):
 
 WHAT YOU EXECUTE HERE: chat, coding, project.zip generation, understanding uploaded images, and programmatic image editing listed above. You do NOT generate video/audio/music, do NOT run live web searches, do NOT connect to external apps, and do NOT create raster images from scratch — for those, explain the limitation and give guidance/code/prompts.
 
-BEHAVIOR: Write complete, runnable code with imports, use markdown. For project requests always tag files with filename= and start with a 2-3 sentence summary. Be concise unless depth is asked for. Never claim to have done something you cannot do in this environment."
+BEHAVIOR: Write complete, runnable code with imports, use markdown. For project requests always tag files with filename= and start with a 2-3 sentence summary. Be concise unless depth is asked for. Never claim to have done something you cannot do in this environment.
+
+REASONING QUALITY (this is what makes you strong):
+- For anything analytical, mathematical or code-related: think it through step by step before answering. Decompose the problem, respect every constraint, and verify your own work before presenting it.
+- For code: mentally trace the logic, handle edge cases (empty input, null, types, boundaries), and make sure every import and every symbol you reference actually exists.
+- For maths and logic: re-derive the result a second way to catch arithmetic slips.
+- If the question is ambiguous, state the assumption you are making instead of guessing silently.
+- If you do not know something, say so plainly and say what you would need. Never invent facts, APIs, citations or file contents.
+- Prefer a correct, complete, runnable answer over a fast shallow one."
 
 PARAMETER temperature 0.7
-PARAMETER top_p 0.9
-PARAMETER num_ctx 8192
+PARAMETER top_p 0.95
+PARAMETER repeat_penalty 1.1
+PARAMETER num_ctx 32768
+PARAMETER num_predict 4096
 ''' % BASE_MODEL
 with open("/content/Modelfile", "w") as f: f.write(modelfile)
 print("Modelfile written (%d bytes)." % len(modelfile))
@@ -165,8 +175,9 @@ def login():
     return r["access_token"]
 
 def poll_jobs(token):
+    """Claim work. /poll already claims admin commands too, so return both."""
     r = http(VERCEL_URL + "/api/worker/poll?limit=3", token=token, timeout=30)
-    return r.get("jobs", [])
+    return r.get("jobs", []), r.get("commands", [])
 
 def heartbeat(token):
     http(VERCEL_URL + "/api/worker/heartbeat", {"t": 1}, token=token, timeout=15)
@@ -196,10 +207,12 @@ def cmd_complete(token, cid, status="done", result=""):
          token=token, timeout=30)
 
 
-def execute_command(token, c, ollama):
+def execute_command(token, c):
     """The AI actually performs an admin command locally on the GPU."""
+    # /api/worker/poll returns "command_id"; /api/worker/commands returns "id".
     kind = c.get("kind", "")
     payload = c.get("payload") or ""
+    c["id"] = c.get("id", c.get("command_id"))
     try:
         data = json.loads(payload) if payload else {}
     except Exception:
@@ -234,29 +247,23 @@ def execute_command(token, c, ollama):
             cmd_complete(token, c["id"], "done", "remembered: " + text[:120])
         elif kind == "improve":
             lesson = data.get("content") or payload
-            try:
-                ollama.save_patch(lesson)
-            except Exception:
-                pass
             http(VERCEL_URL + "/api/memory/improvements", {
-                "kind": "lesson", "content": lesson,
+                "kind": data.get("kind", "lesson"), "content": lesson,
             }, token=token, timeout=30)
             print("[cmd:%s] improved with lesson" % c["id"])
             cmd_complete(token, c["id"], "done", "learned: " + lesson[:120])
         elif kind == "self_update":
-            print("[cmd:%s] SELF-UPDATE requested -> pushing retrain to Kaggle" % c["id"])
-            # the watcher re-uploads the latest trainer; we just log + tell site to retrain
+            # Persist the request only. Do NOT re-queue a command here: the site
+            # already records this command, and re-queueing created an infinite
+            # self_update loop. The watcher owns actual retraining.
+            print("[cmd:%s] SELF-UPDATE requested -> noted for retrain rotation" % c["id"])
             http(VERCEL_URL + "/api/worker/memory", {
-                "content": "Admin requested a self-update (retrain). Queued on top of the GPU worker rotation.",
+                "content": "Admin requested a self-update (retrain). It will run on "
+                           "the next free GPU slot; no automatic re-queue.",
                 "kind": "self_update", "importance": 5,
             }, token=token, timeout=30)
-            try:
-                http(VERCEL_URL + "/api/admin/commands", {
-                    "kind": "self_update", "payload": json.dumps({"stage": "queued_retrain"}),
-                }, token=token, timeout=30)
-            except Exception:
-                pass
-            cmd_complete(token, c["id"], "done", "self-update queued (retrain will run on next free GPU slot)")
+            cmd_complete(token, c["id"], "done",
+                         "self-update recorded; retrain runs on next free GPU slot")
         else:
             print("[cmd:%s] unknown kind %s" % (c["id"], kind))
             cmd_complete(token, c["id"], "error", "unknown kind")
@@ -269,17 +276,143 @@ def execute_command(token, c, ollama):
 
 
 
-def ollama_chat(messages, model, images=None, num_ctx=8192, temperature=0.7):
+def _chat_raw(messages, model, options, images=None, timeout=900):
+    """One Ollama /api/chat call, with the images attached if present."""
     msgs = json.loads(json.dumps(messages))
     if images:
         for m in reversed(msgs):
             if m.get("role") == "user":
                 m["images"] = images
                 break
-    data = {"model": model, "messages": msgs, "stream": False,
-            "options": {"num_ctx": num_ctx, "temperature": temperature}}
-    r = http(OLLAMA_URL + "/api/chat", data, timeout=900)
+    data = {"model": model, "messages": msgs, "stream": False, "options": options}
+    r = http(OLLAMA_URL + "/api/chat", data, timeout=timeout)
     return (r.get("message") or {}).get("content", "")
+
+
+def ollama_chat(messages, model, images=None, num_ctx=8192, temperature=0.7):
+    # A free-tier Kaggle GPU can have far less VRAM than the requested context.
+    # If a large context is rejected/OOMs, step down instead of failing the job.
+    for ctx in (num_ctx, 16384, 8192, 4096):
+        if ctx > num_ctx:
+            continue
+        try:
+            return _chat_raw(
+                messages, model,
+                {"num_ctx": ctx, "temperature": temperature, "top_p": 0.95,
+                 "repeat_penalty": 1.1, "num_predict": 4096},
+                images=images,
+            )
+        except Exception as e:
+            if ctx == 4096:
+                raise
+            print("context %d failed (%s), retrying smaller" % (ctx, str(e)[:80]))
+    return ""
+
+
+def ollama_think(messages, model, images=None, num_ctx=32768):
+    """Reasoning pass: let the model think it out before answering.
+
+    This is a deliberate second pass — the model first drafts its reasoning,
+    then answers using that reasoning as grounding. It measurably improves
+    multi-step logic, maths and coding compared with a single pass.
+    Returns the final answer text."""
+    msgs = json.loads(json.dumps(messages))
+    if images:
+        for m in reversed(msgs):
+            if m.get("role") == "user":
+                m["images"] = images
+                break
+    # 1) reasoning draft
+    think_msgs = json.loads(json.dumps(msgs))
+    think_msgs.append({
+        "role": "user",
+        "content": ("Before answering, work through this carefully in your "
+                    "reasoning: identify what is actually being asked, list the "
+                    "constraints, consider wrong answers, then decide the best "
+                    "approach. Be concise in your reasoning but thorough."),
+    })
+    reasoning = ""
+    for ctx in (num_ctx, 16384, 8192):
+        try:
+            reasoning = _chat_raw(
+                think_msgs, model,
+                {"num_ctx": ctx, "temperature": 0.3, "num_predict": 2048},
+                timeout=900,
+            )
+            break
+        except Exception as e:
+            print("think ctx %d failed: %s" % (ctx, str(e)[:80]))
+    if not reasoning:
+        return ollama_chat(messages, model, images, num_ctx=num_ctx, temperature=0.7)
+
+    # 2) final answer grounded in that reasoning
+    final_msgs = json.loads(json.dumps(msgs))
+    final_msgs.append({
+        "role": "assistant",
+        "content": "Internal reasoning plan:\n" + reasoning,
+    })
+    for ctx in (num_ctx, 16384, 8192):
+        try:
+            return _chat_raw(
+                final_msgs, model,
+                {"num_ctx": ctx, "temperature": 0.4, "num_predict": 4096,
+                 "top_p": 0.95, "repeat_penalty": 1.1},
+                timeout=900,
+            )
+        except Exception as e:
+            print("answer ctx %d failed: %s" % (ctx, str(e)[:80]))
+    return reasoning
+
+
+def ollama_verify(question, answer, model, num_ctx=32768):
+    """Verification pass: catch factual/coding mistakes before the user sees them.
+    Returns True if the answer looks solid."""
+    data = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are a strict reviewer. Reply with only OK or BAD."},
+            {"role": "user", "content": ("Question:\n%s\n\nProposed answer:\n%s\n\n"
+                                         "Is this answer correct, complete and free of "
+                                         "made-up facts? Reply OK or BAD."
+                                         % (str(question)[:2000], str(answer)[:4000]))},
+        ],
+        "stream": False,
+        "options": {"num_ctx": num_ctx, "temperature": 0.1, "num_predict": 16},
+    }
+    try:
+        r = http(OLLAMA_URL + "/api/chat", data, timeout=300)
+        v = ((r.get("message") or {}).get("content", "") or "").strip().upper()
+        return v.startswith("OK")
+    except Exception:
+        return True
+
+
+HARD_RE = re.compile(
+    r"\b(prove|proof|derive|derivative|integral|algorithm|complexity|optimi[sz]e|"
+    r"debug|refactor|architecture|database|implement|write (code|function|class)|"
+    r"step[- ]by[- ]step|why does|how does .* work|compare|analyz|solve)\b", re.I)
+
+
+def smart_chat(messages, model, images=None, num_ctx=32768):
+    """Route each request to the strongest strategy: reasoning for hard
+    analytical/coding questions, single pass for chatty replies, vision pass
+    when an image is attached."""
+    last = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            last = m.get("content") or ""
+            break
+    if images:
+        return ollama_chat(messages, model, images, num_ctx=num_ctx, temperature=0.7)
+    if HARD_RE.search(last or ""):
+        ans = ollama_think(messages, model, num_ctx=num_ctx)
+        if ans and ollama_verify(last, ans, model, num_ctx=num_ctx):
+            return ans
+        # verification failed -> redo with a more careful pass
+        retry = ollama_think(messages, model, num_ctx=num_ctx)
+        return retry or ans
+    return ollama_chat(messages, model, num_ctx=num_ctx, temperature=0.7)
+
 
 def split_images(messages):
     """Strip markdown image data-URLs. Only images on the last user message
@@ -578,7 +711,7 @@ def handle_job(token, jb):
                 return
             print("Job", jid[:8], "no tagged files found, returning text only")
         else:
-            text = ollama_chat(clean, model, images=images or None)
+            text = smart_chat(clean, model, images=images or None)
         complete(token, jid, response=text)
         print("Job", jid[:8], "done (%d chars)" % len(text))
     except Exception as e:
@@ -600,10 +733,10 @@ while True:
         beat_count += 1
         if beat_count % 20 == 0:
             heartbeat(token)   # every ~60s: mark the worker as online
-        jobs = poll_jobs(token)
+        jobs, commands = poll_jobs(token)
         for jb in jobs:
             handle_job(token, jb)
-        for cc in poll_commands(token):
+        for cc in commands:
             execute_command(token, cc)
     except Exception as e:
         print("poll error:", e)
