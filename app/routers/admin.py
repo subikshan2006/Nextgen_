@@ -1,10 +1,11 @@
 """Admin endpoints: users, models, system status, api settings."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_admin, hash_password
 from ..database import active_driver, get_db, get_ollama_url
-from ..models import ApiSetting, Conversation, User
+from ..models import ApiSetting, Conversation, Message, User
 from ..schemas import (
     ModelInfo, OllamaStatus, OllamaUrlIn, SystemStatus, UserAdminUpdate, UserOut,
 )
@@ -52,6 +53,119 @@ def delete_user(user_id: int, admin: User = Depends(get_current_admin), db: Sess
     db.delete(user)
     db.commit()
     return {"ok": True}
+
+
+@router.get("/users/activity")
+def users_activity(_: User = Depends(get_current_admin), db: Session = Depends(get_db)):
+    """Full account overview for every user: identity, activity counters and
+    what they searched. Passwords are bcrypt-hashed (one-way) so plaintext is
+    never stored — use the reset endpoint to set a new one."""
+    from ..models import ChatJob, Feedback, Memory, SearchResult
+
+    rows = []
+    for u in db.query(User).order_by(User.id).all():
+        convs = db.query(Conversation).filter(Conversation.user_id == u.id).count()
+        msgs = (
+            db.query(func.count(Message.id))
+            .join(Conversation, Message.conversation_id == Conversation.id)
+            .filter(Conversation.user_id == u.id)
+            .scalar()
+            or 0
+        )
+        jobs = db.query(ChatJob).filter(ChatJob.user_id == u.id).count()
+        searches = (
+            db.query(func.count(SearchResult.id))
+            .join(ChatJob, SearchResult.job_id == ChatJob.id)
+            .filter(ChatJob.user_id == u.id)
+            .scalar()
+            or 0
+        )
+        mems = db.query(Memory).filter(Memory.user_id == u.id).count()
+        fb = db.query(Feedback).filter(Feedback.user_id == u.id).count()
+        # Distinct things this user asked the AI (their prompts) — the search
+        # terms they used are the job prompts that produced search results.
+        prompts = [
+            r[0]
+            for r in db.query(ChatJob.prompt)
+            .filter(ChatJob.user_id == u.id)
+            .order_by(ChatJob.created_at.desc())
+            .limit(25)
+            .all()
+            if r[0]
+        ]
+        rows.append({
+            "id": u.id,
+            "email": u.email,
+            "username": u.username,
+            "is_admin": bool(u.is_admin),
+            "is_active": bool(u.is_active),
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_login": u.last_login.isoformat() if u.last_login else None,
+            "conversations": convs,
+            "messages": int(msgs),
+            "jobs": jobs,
+            "searches": int(searches),
+            "memories": mems,
+            "feedback": fb,
+            "recent_searches": prompts,
+            "password_storage": "bcrypt (hashed — not reversible)",
+        })
+    return {"users": rows}
+
+
+@router.get("/searches")
+def all_searches(limit: int = 100, _: User = Depends(get_current_admin), db: Session = Depends(get_db)):
+    """Every web-search result the AI fetched, with who asked for it."""
+    from ..models import ChatJob, SearchResult
+
+    q = (
+        db.query(SearchResult, ChatJob, User)
+        .join(ChatJob, SearchResult.job_id == ChatJob.id)
+        .join(User, ChatJob.user_id == User.id)
+        .order_by(SearchResult.id.desc())
+        .limit(max(1, min(limit, 500)))
+        .all()
+    )
+    out = []
+    for sr, job, user in q:
+        out.append({
+            "id": sr.id,
+            "user": user.username,
+            "email": user.email,
+            "query": (job.prompt or "")[:300],
+            "title": sr.title,
+            "url": sr.url,
+            "snippet": (sr.snippet or "")[:220],
+            "rank": sr.rank,
+        })
+    return {"searches": out}
+
+
+@router.post("/users/{user_id}/reset-password")
+def reset_password(
+    user_id: int,
+    payload: dict = Body(...),
+    _: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Set a new password for any account (bcrypt-hashed at rest).
+
+    Body: {"new_password": "..."}  — the plaintext is only ever seen in this
+    request; it is hashed immediately and never stored or logged.
+    """
+    new_password = (payload or {}).get("new_password") or ""
+    if len(new_password) < 8:
+        raise HTTPException(422, "new_password must be at least 8 characters")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    user.password_hash = hash_password(new_password)
+    db.commit()
+    return {
+        "ok": True,
+        "user": user.username,
+        "note": "password updated (stored as a bcrypt hash, never in plaintext)",
+    }
 
 
 @router.get("/models", response_model=list[ModelInfo])

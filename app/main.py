@@ -212,3 +212,9 @@ def command_center_page():
 @app.get("/admin/command-center")
 def command_center_alias():
     return FileResponse(str(STATIC_DIR / "command_center.html"))
+
+
+@app.get("/admin/users")
+def admin_users_page():
+    """User accounts, their searches, and admin password reset."""
+    return FileResponse(str(STATIC_DIR / "admin_users.html"))
