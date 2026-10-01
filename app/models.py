@@ -131,6 +131,7 @@ class WorkerCommand(Base):
     status = Column(String(20), default="pending")  # pending | running | done | error
     result = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)  # last claim; used to re-queue dead workers
     completed_at = Column(DateTime, nullable=True)
 
 
