@@ -218,40 +218,13 @@ def execute_command(token, c):
     except Exception:
         data = {}
     try:
-        if kind == "emotion":
-            mood = data.get("mood", "curious")
-            intensity = max(1, min(10, int(data.get("intensity", 4))))
-            # store as a memory the server persists, then reflect in next replies
-            http(VERCEL_URL + "/api/worker/memory", {
-                "content": "I am currently feeling: %s (intensity %d/10)" % (mood, intensity),
-                "kind": "emotion", "importance": 3,
-            }, token=token, timeout=30)
-            print("[cmd:%s] emotion -> %s (%d)" % (c["id"], mood, intensity))
-            cmd_complete(token, c["id"], "done", "emotion set to %s" % mood)
-        elif kind == "grant":
-            tool = data.get("tool", "")
-            enabled = bool(data.get("enabled", True))
-            http(VERCEL_URL + "/api/worker/memory", {
-                "content": ("Granted tool '%s' to the AI." if enabled else "Revoked tool '%s'.")
-                            % tool,
-                "kind": "tool_grant", "importance": 4 if enabled else 3,
-            }, token=token, timeout=30)
-            print("[cmd:%s] grant %s = %s" % (c["id"], tool, enabled))
-            cmd_complete(token, c["id"], "done", "tool %s %s" % (tool, "granted" if enabled else "revoked"))
-        elif kind == "remember":
-            text = data.get("content") or payload
-            http(VERCEL_URL + "/api/worker/memory", {
-                "content": text, "kind": data.get("kind", "fact"), "importance": 4,
-            }, token=token, timeout=30)
-            print("[cmd:%s] remembered" % c["id"])
-            cmd_complete(token, c["id"], "done", "remembered: " + text[:120])
-        elif kind == "improve":
-            lesson = data.get("content") or payload
-            http(VERCEL_URL + "/api/memory/improvements", {
-                "kind": data.get("kind", "lesson"), "content": lesson,
-            }, token=token, timeout=30)
-            print("[cmd:%s] improved with lesson" % c["id"])
-            cmd_complete(token, c["id"], "done", "learned: " + lesson[:120])
+        # emotion / remember / improve / grant are server-state commands. The
+        # site applies them itself when they are queued and marks them done, so
+        # they never reach the worker. If one does arrive, do NOT write a
+        # duplicate memory row: report that the site already applied it.
+        if kind in ("emotion", "remember", "improve", "grant"):
+            print("[cmd:%s] %s already applied by the site" % (c["id"], kind))
+            cmd_complete(token, c["id"], "done", "%s handled by the site" % kind)
         elif kind == "self_update":
             # Persist the request only. Do NOT re-queue a command here: the site
             # already records this command, and re-queueing created an infinite

@@ -5,11 +5,10 @@ the GPU worker during its poll (it acts on them like chat jobs)."""
 import datetime
 import json
 import os
-import secrets
 import subprocess
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_admin
@@ -20,26 +19,56 @@ from ..schemas import EmotionOut, WorkerCommandIn, WorkerCommandOut
 router = APIRouter(prefix="/api/admin/commands", tags=["admin-command"])
 
 
-def _current_admin(db: Session) -> User:
-    from ..auth import get_current_admin
-
-    return get_current_admin
-# NOTE: admin auth is applied per-endpoint via Depends(get_current_admin).
-
-
 def _is_admin(user: User) -> bool:
     return bool(getattr(user, "is_admin", False))
 
 
+# Kinds whose effect is a pure server-side state change. These are applied here
+# and now, instead of being delegated to the remote GPU worker, because the
+# worker has no way to write ApiSetting/Memory rows the system actually reads
+# (it could only append a memory row, so "emotion set" never changed the
+# emotion and admin instructions never reached real users).
+_HOST_KINDS = ("emotion", "remember", "improve", "grant")
+
+
+def _apply_host_side(db: Session, kind: str, payload: str) -> str:
+    """Perform a command that only touches server state. Raises on error."""
+    if kind == "grant":
+        data = json.loads(payload or "{}") or {}
+        return _grant_tool(db, data.get("tool", ""), bool(data.get("enabled", True)))
+    if kind == "emotion":
+        return _set_emotion(db, payload)
+    if kind == "remember":
+        return _remember(db, payload)
+    if kind == "improve":
+        return _improve(db, payload)
+    raise ValueError(f"command type '{kind}' is not host-runnable")
+
+
 @router.post("", response_model=WorkerCommandOut)
 def issue_command(cmd: WorkerCommandIn, user: User = Depends(get_current_admin), db: Session = Depends(get_db)):
-    """Admin issues a command the AI worker will pick up and perform."""
+    """Admin issues a command for the AI to carry out.
+
+    Server-state commands (emotion / remember / improve / grant) are applied
+    immediately and recorded as done, so the effect is real and the admin UI
+    never shows a phantom success. GPU commands (self_update) stay queued for
+    the remote worker to claim."""
     cid = uuid.uuid4().hex[:16]
+    status = "pending"
+    result = None
+    if cmd.kind in _HOST_KINDS:
+        try:
+            result = _apply_host_side(db, cmd.kind, cmd.payload)
+            status = "done"
+        except Exception as e:
+            result = f"error: {e}"
+            status = "error"
     row = WorkerCommand(
         id=cid,
         kind=cmd.kind,
         payload=cmd.payload,
-        status="pending",
+        status=status,
+        result=result,
     )
     db.add(row)
     db.commit()
@@ -95,11 +124,21 @@ def _remember(db: Session, payload: str) -> str:
     except Exception:
         data = {}
     content = data.get("content") or data.get("text") or payload
-    kind = data.get("kind", "fact")
-    mem = Memory(content=content, kind=kind, source="admin", importance=data.get("importance", 3))
+    kind = data.get("kind", "instruction")
+    # user_id stays NULL on purpose: this is an operator instruction that must
+    # reach every user, not a note about the admin's own chats.
+    existing = (
+        db.query(Memory)
+        .filter(Memory.user_id.is_(None), Memory.content == content)
+        .first()
+    )
+    if existing:
+        return f"already remembered: {content[:80]}"
+    mem = Memory(content=content, kind=kind, source="admin",
+                 importance=max(1, min(5, int(data.get("importance", 5)))))
     db.add(mem)
     db.commit()
-    return f"remembered: {content[:80]}"
+    return f"remembered for all users: {content[:80]}"
 
 
 def _improve(db: Session, payload: str) -> str:
@@ -139,19 +178,12 @@ def run_now(cmd: WorkerCommandIn, user: User = Depends(get_current_admin), db: S
     for things that must happen right now: grant tools, set emotion, remember."""
     kind = cmd.kind
     try:
-        if kind == "grant":
-            payload = json.loads(cmd.payload or "{}") or {}
-            result = _grant_tool(db, payload.get("tool", ""), bool(payload.get("enabled", True)))
-        elif kind == "emotion":
-            result = _set_emotion(db, cmd.payload)
-        elif kind == "remember":
-            result = _remember(db, cmd.payload)
-        elif kind == "improve":
-            result = _improve(db, cmd.payload)
+        if kind in _HOST_KINDS:
+            result = _apply_host_side(db, kind, cmd.payload)
         elif kind == "self_update":
             result = _self_update(db)
         else:
-            result = f"command type '{kind}' is host-runnable; use queue for the rest"
+            result = f"command type '{kind}' is not host-runnable"
         status = "done"
     except Exception as e:
         result = f"error: {e}"

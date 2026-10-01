@@ -55,8 +55,7 @@ def chat_for_commands(url, data):
     if "/api/worker/poll" in url:
         # the server claims 1 pending command and returns it
         return {"jobs": [], "commands": [
-            {"command_id": 77, "kind": "remember",
-             "payload": json.dumps({"content": "unit test memory"})}]}
+            {"command_id": 77, "kind": "self_update", "payload": "{}"}]}
     if "/api/worker/commands/complete" in url:
         calls["cmd_done"].append(data); return {"ok": True}
     if "/api/worker/commands" in url:
@@ -72,18 +71,18 @@ for c in commands:
     g["execute_command"]("t", c)
 print("memory posts   :", calls["memory"])
 print("command done   :", calls["cmd_done"])
-t1 = (len(calls["memory"]) == 1
-      and calls["memory"][0]["content"] == "unit test memory"
-      and len(calls["cmd_done"]) == 1
+t1 = (len(calls["cmd_done"]) == 1
       and calls["cmd_done"][0]["command_id"] == 77
       and calls["cmd_done"][0]["status"] == "done")
 print("TEST 1 (poll consumes commands, command_id honoured):", "PASS" if t1 else "FAIL")
 
-# ---------- test 2: legacy "id" key still works ----------
+# ---------- test 2: legacy "id" key + server-side kinds ----------
 calls["cmd_done"].clear()
 g["execute_command"]("t", {"id": 5, "kind": "emotion",
                            "payload": json.dumps({"mood": "focused", "intensity": 7})})
-t2 = (len(calls["cmd_done"]) == 1 and calls["cmd_done"][0]["command_id"] == 5)
+t2 = (len(calls["cmd_done"]) == 1
+      and calls["cmd_done"][0]["command_id"] == 5
+      and calls["cmd_done"][0]["status"] == "done")
 print("TEST 2 (legacy id key):", "PASS" if t2 else "FAIL", calls["cmd_done"])
 
 # ---------- test 3: smart_chat routing ----------
