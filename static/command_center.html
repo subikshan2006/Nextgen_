@@ -144,11 +144,19 @@
   function escapeHtml(s){ return esc(s); }
 
   async function api(path, method="GET", body){
+    const token = localStorage.getItem("nextgen_token");
+    if(!token){ location.href = "/login"; throw new Error("not logged in"); }
     const r = await fetch(API + path, {
-      method, headers: body?{"Content-Type":"application/json"}:undefined,
-      body: body?JSON.stringify(body):undefined,
-      credentials: "include"
+      method,
+      headers: Object.assign({"Content-Type":"application/json"},
+                             token ? {"Authorization":"Bearer "+token} : {}),
+      body: body?JSON.stringify(body):undefined
     });
+    if(r.status === 401 || r.status === 403){
+      localStorage.removeItem("nextgen_token");
+      location.href = "/login";
+      throw new Error("session expired — redirecting to login");
+    }
     if(!r.ok){ const t = await r.text().catch(()=>""); throw new Error("HTTP "+r.status+" "+t.slice(0,200)); }
     return r.json();
   }

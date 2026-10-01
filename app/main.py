@@ -201,3 +201,14 @@ def login_page():
 @app.get("/admin")
 def admin_page():
     return FileResponse(str(STATIC_DIR / "admin.html"))
+
+
+@app.get("/command-center")
+def command_center_page():
+    """Admin Command Center — issue commands the AI actually executes."""
+    return FileResponse(str(STATIC_DIR / "command_center.html"))
+
+
+@app.get("/admin/command-center")
+def command_center_alias():
+    return FileResponse(str(STATIC_DIR / "command_center.html"))
