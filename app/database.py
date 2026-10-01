@@ -33,8 +33,49 @@ def init_db():
     engine = get_engine()
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
+    _auto_add_missing_columns()
     _seed_admin()
     return SessionLocal
+
+
+def _auto_add_missing_columns():
+    """`create_all` only creates whole tables — it never adds new columns to a
+    table that already exists. That silently breaks the API with
+    "no such column" after any model change. This adds any missing columns
+    (ADD COLUMN IF NOT EXISTS) so schema changes deploy safely."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue  # table was just created with the right shape
+        have = {c["name"] for c in inspector.get_columns(table.name)}
+        for col in table.columns:
+            if col.name in have:
+                continue
+            ddl = _column_ddl(col)
+            if not ddl:
+                continue
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE %s ADD COLUMN %s" % (table.name, ddl)))
+                print("[db] added column %s.%s" % (table.name, col.name))
+            except Exception as e:  # never block boot on a migration hiccup
+                print("[db] could not add %s.%s: %s" % (table.name, col.name, e))
+
+
+def _column_ddl(col):
+    """Render a portable `ALTER TABLE ... ADD COLUMN` fragment."""
+    try:
+        coltype = col.type.compile(engine.dialect)
+    except Exception:
+        return None
+    ddl = "%s %s" % (col.name, coltype)
+    default = getattr(col, "server_default", None)
+    if default is not None and default.arg is not None:
+        ddl += " DEFAULT %s" % (default.arg.text if hasattr(default.arg, "text") else default.arg)
+    return ddl
 
 
 def _seed_admin():

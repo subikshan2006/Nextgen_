@@ -1,4 +1,5 @@
 """Pydantic request/response schemas."""
+import datetime
 from typing import List, Optional
 from pydantic import BaseModel, EmailStr, Field
 
@@ -183,7 +184,7 @@ class WorkerCommandOut(BaseModel):
     payload: str | None = None
     status: str = "pending"
     result: str | None = None
-    created_at: str
+    created_at: datetime.datetime
 
     class Config:
         from_attributes = True

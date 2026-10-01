@@ -12,11 +12,12 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from ..auth import get_current_admin
 from ..database import get_db
 from ..models import ApiSetting, Feedback, Memory, SelfImprovement, User, WorkerCommand
 from ..schemas import EmotionOut, WorkerCommandIn, WorkerCommandOut
 
-router = APIRouter(prefix="/admin/commands", tags=["admin-command"])
+router = APIRouter(prefix="/api/admin/commands", tags=["admin-command"])
 
 
 def _current_admin(db: Session) -> User:

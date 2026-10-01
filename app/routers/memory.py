@@ -14,7 +14,15 @@ from sqlalchemy.orm import Session
 
 from ..auth import get_current_user
 from ..database import get_db
-from ..models import ChatJob, Feedback, Memory, SelfImprovement, User
+from ..models import (
+    ApiSetting,
+    ChatJob,
+    Feedback,
+    Memory,
+    SelfImprovement,
+    User,
+    WorkerCommand,
+)
 from ..schemas import FeedbackIn, FeedbackOut, MemoryIn, MemoryOut, SelfImprovementOut
 
 router = APIRouter(prefix="/api", tags=["memory"])
@@ -200,6 +208,27 @@ def alive_status(
     fb_count = db.query(Feedback).filter(Feedback.user_id == user.id).count()
     fb_good = db.query(Feedback).filter(Feedback.user_id == user.id, Feedback.rating == 1).count()
     fb_bad = db.query(Feedback).filter(Feedback.user_id == user.id, Feedback.rating == -1).count()
+
+    # Current emotion/mind state set by the admin Command Center.
+    mood_row = db.query(ApiSetting).filter(ApiSetting.key == "emotion_mood").first()
+    int_row = db.query(ApiSetting).filter(ApiSetting.key == "emotion_intensity").first()
+    mood = mood_row.value if mood_row and mood_row.value else "curious"
+    try:
+        intensity = int(int_row.value) if int_row and int_row.value else 3
+    except Exception:
+        intensity = 3
+    # Worker heartbeat so the UI can show if the acting brain is connected.
+    seen = db.query(ApiSetting).filter(ApiSetting.key == "worker_last_seen").first()
+    worker_online = False
+    if seen and seen.value:
+        try:
+            worker_online = (
+                datetime.datetime.utcnow().timestamp() - float(seen.value)
+            ) < 180
+        except Exception:
+            worker_online = False
+    cmd_count = db.query(WorkerCommand).count()
+
     return {
         "memories": mem_count,
         "lessons": lesson_count,
@@ -207,5 +236,13 @@ def alive_status(
         "feedback_good": fb_good,
         "feedback_bad": fb_bad,
         "alive": True,
+        "emotion": mood,
+        "mood": mood,
+        "intensity": intensity,
+        "commands": cmd_count,
+        "commands_pending": db.query(WorkerCommand)
+        .filter(WorkerCommand.status.in_(["pending", "running"]))
+        .count(),
+        "worker_online": worker_online,
         "uptime_note": "I learn from every conversation. Your memories persist across chats.",
     }
